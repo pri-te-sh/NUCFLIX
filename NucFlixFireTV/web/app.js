@@ -2643,7 +2643,7 @@
     start(item) {
       this.stop();
       this.item = item;
-      this.intro = { start: null, last: null, done: false };
+      this.intro = { start: null, last: null, first: null, done: false };
       if (item.kind === 'live') return;
       this.ref = item.kind === 'movie' ? { kind: 'movie', id: item.streamId } : { kind: 'episode', id: item.episode.episodeId };
       Cloud.getMarker(this.ref.kind, this.ref.id).then(m => { if (this.item === item) this.marker = m || {}; });
@@ -2733,6 +2733,7 @@
     introFrame(r, pos, st) {
       const p = r.probabilities || {};
       const intro = this.intro;
+      if (intro.first == null) intro.first = pos;
       if ((p.intro || 0) >= 0.6) {
         if (intro.start == null) intro.start = Math.max(0, pos - 5);
         intro.last = pos;
@@ -2744,7 +2745,9 @@
         Object.assign(this.marker, { introStart: intro.start, introEnd: end });
         Cloud.saveMarker(this.ref.kind, this.ref.id, { introStart: intro.start, introEnd: end, duration: st.duration });
       } else if (pos > 240) {
-        intro.done = true; // no opening titles in the first four minutes: remember that too
+        intro.done = true;
+        // No opening titles in the first four minutes: remember that too — but only if we watched them.
+        if (intro.first >= 60) return;
         Object.assign(this.marker, { introStart: 0, introEnd: 0 });
         Cloud.saveMarker(this.ref.kind, this.ref.id, { introStart: 0, introEnd: 0, duration: st.duration });
       }

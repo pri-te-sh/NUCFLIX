@@ -3,12 +3,13 @@ import UIKit
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseFunctions
 import GoogleSignIn
 
 // MARK: - Firebase bootstrap
 
 enum CloudBootstrap {
-    /// Launch argument that points Auth + Firestore at the local emulators (used for testing on the simulator).
+    /// Launch argument that points Auth, Firestore and Functions at the local emulators (used for testing on the simulator).
     static let emulatorFlag = "-useFirebaseEmulator"
 
     static func configure() {
@@ -23,6 +24,7 @@ enum CloudBootstrap {
             settings.host = "127.0.0.1:8181"
             settings.isSSLEnabled = false
             Auth.auth().useEmulator(withHost: "127.0.0.1", port: 9099)
+            Functions.functions(region: SmartAI.region).useEmulator(withHost: "127.0.0.1", port: 5001)
         }
         #endif
         db.settings = settings

@@ -167,6 +167,12 @@ final class AppState {
     @ObservationIgnored private var adultLiveCategoryIDs = Set<String>()
     @ObservationIgnored private var adultVodCategoryIDs = Set<String>()
     @ObservationIgnored private var adultSeriesCategoryIDs = Set<String>()
+    /// Categories hidden by the AI tags (SmartAI): adult ones, and for kids profiles everything not judged
+    /// suitable for young children.
+    @ObservationIgnored private var aiHiddenLiveCategoryIDs = Set<String>()
+    @ObservationIgnored private var aiHiddenVodCategoryIDs = Set<String>()
+    @ObservationIgnored private var aiHiddenSeriesCategoryIDs = Set<String>()
+    @ObservationIgnored private var smartTagsTask: Task<Void, Never>?
     @ObservationIgnored private var adultLiveStreamIDs = Set<Int>()
     @ObservationIgnored private var adultMovieIDs = Set<Int>()
 
@@ -632,6 +638,12 @@ final class AppState {
         adultLiveCategoryIDs = []
         adultVodCategoryIDs = []
         adultSeriesCategoryIDs = []
+        aiHiddenLiveCategoryIDs = []
+        aiHiddenVodCategoryIDs = []
+        aiHiddenSeriesCategoryIDs = []
+        smartTagsTask?.cancel()
+        SmartAI.shared.stopTags()
+        SmartAI.shared.reset()
         adultLiveStreamIDs = []
         adultMovieIDs = []
         liveStreamsByCategory = [:]
@@ -692,6 +704,7 @@ final class AppState {
         activeProfileID = profile.id
         activeLineID = line.id
         isKidsProfile = profile.kids
+        applySmartTags(immediately: true)
         resetUserData()
         autoplayNextEpisode = profile.autoplayNext
         if profile.kids { showAdultContent = false }
@@ -740,6 +753,7 @@ final class AppState {
         self.adultLiveCategoryIDs = Set(loadedLiveCats.filter { Self.isAdultCategoryName($0.categoryName) }.map(\.id))
         self.adultVodCategoryIDs = Set(loadedVodCats.filter { Self.isAdultCategoryName($0.categoryName) }.map(\.id))
         self.adultSeriesCategoryIDs = Set(loadedSeriesCats.filter { Self.isAdultCategoryName($0.categoryName) }.map(\.id))
+        startSmartTags()
         applyVisibleCategories()
 
         if selectedLiveCategoryID.isEmpty, let first = self.liveCategories.first {
@@ -1042,7 +1056,7 @@ final class AppState {
         }
         self.featuredMovies = Array(vodRail.prefix(24))
 
-        if let sID = preferredSeriesCatID, let sItems = seriesByCategory[sID], !sItems.isEmpty, showAdultContent || !adultSeriesCategoryIDs.contains(sID) {
+        if let sID = preferredSeriesCatID, let sItems = seriesByCategory[sID], !sItems.isEmpty, showAdultContent || !(adultSeriesCategoryIDs.contains(sID) || aiHiddenSeriesCategoryIDs.contains(sID)) {
             self.featuredSeries = Array(sItems.prefix(24))
             self.spotlightSeries = Array(sItems.filter { ($0.backdropPath?.values.isEmpty == false) || ($0.cover?.isEmpty == false) }.prefix(6))
         } else {
@@ -1334,8 +1348,8 @@ final class AppState {
     private func rebuildHomeFeedNow() async {
         guard let profileID = tasteProfileID else { return }
         let allowAdult = showAdultContent
-        let adultVodCats = adultVodCategoryIDs
-        let adultSeriesCats = adultSeriesCategoryIDs
+        let adultVodCats = adultVodCategoryIDs.union(aiHiddenVodCategoryIDs)
+        let adultSeriesCats = adultSeriesCategoryIDs.union(aiHiddenSeriesCategoryIDs)
         let adultMovies = adultMovieIDs
         let rawMovies = allMoviesCatalog.isEmpty ? Array(vodStreamsByCategory.values.joined()) : allMoviesCatalog
         let rawSeries = allSeriesCatalog.isEmpty ? Array(seriesByCategory.values.joined()) : allSeriesCatalog
@@ -1421,16 +1435,19 @@ final class AppState {
         channel.isAdult
             || adultLiveStreamIDs.contains(channel.streamId.value)
             || adultLiveCategoryIDs.contains(channel.categoryId?.value ?? "")
+            || aiHiddenLiveCategoryIDs.contains(channel.categoryId?.value ?? "")
     }
 
     func isAdultContent(_ movie: XtreamVODStream) -> Bool {
         movie.isAdult
             || adultMovieIDs.contains(movie.streamId.value)
             || adultVodCategoryIDs.contains(movie.categoryId?.value ?? "")
+            || aiHiddenVodCategoryIDs.contains(movie.categoryId?.value ?? "")
     }
 
     func isAdultContent(_ series: XtreamSeries) -> Bool {
         adultSeriesCategoryIDs.contains(series.categoryId?.value ?? "")
+            || aiHiddenSeriesCategoryIDs.contains(series.categoryId?.value ?? "")
     }
 
     /// Whether a Continue Watching / history entry should be hidden by the NSFW filter
@@ -1546,16 +1563,110 @@ final class AppState {
             vodCategories = rawVodCategories
             seriesCategories = rawSeriesCategories
         } else {
-            liveCategories = rawLiveCategories.filter { !adultLiveCategoryIDs.contains($0.id) }
-            vodCategories = rawVodCategories.filter { !adultVodCategoryIDs.contains($0.id) }
-            seriesCategories = rawSeriesCategories.filter { !adultSeriesCategoryIDs.contains($0.id) }
+            liveCategories = rawLiveCategories.filter { !adultLiveCategoryIDs.contains($0.id) && !aiHiddenLiveCategoryIDs.contains($0.id) }
+            vodCategories = rawVodCategories.filter { !adultVodCategoryIDs.contains($0.id) && !aiHiddenVodCategoryIDs.contains($0.id) }
+            seriesCategories = rawSeriesCategories.filter { !adultSeriesCategoryIDs.contains($0.id) && !aiHiddenSeriesCategoryIDs.contains($0.id) }
         }
-        // Never leave an adult category selected while the filter is on
+        // Never leave a hidden category selected while the filter is on
         if !showAdultContent {
-            if adultLiveCategoryIDs.contains(selectedLiveCategoryID) { selectedLiveCategoryID = liveCategories.first?.id ?? "" }
-            if adultVodCategoryIDs.contains(selectedVODCategoryID) { selectedVODCategoryID = vodCategories.first?.id ?? "" }
-            if adultSeriesCategoryIDs.contains(selectedSeriesCategoryID) { selectedSeriesCategoryID = seriesCategories.first?.id ?? "" }
+            if !liveCategories.contains(where: { $0.id == selectedLiveCategoryID }) { selectedLiveCategoryID = liveCategories.first?.id ?? "" }
+            if !vodCategories.contains(where: { $0.id == selectedVODCategoryID }) { selectedVODCategoryID = vodCategories.first?.id ?? "" }
+            if !seriesCategories.contains(where: { $0.id == selectedSeriesCategoryID }) { selectedSeriesCategoryID = seriesCategories.first?.id ?? "" }
         }
+    }
+
+    // MARK: - AI category tags
+
+    /// Follows the line's AI tags (kids-safe, adult, language, genre) and tags new categories in the background.
+    private func startSmartTags() {
+        guard let lineID = activeLineID else { return }
+        SmartAI.shared.startTags(lineID: lineID, categories: [
+            (kind: "live", cats: rawLiveCategories), (kind: "movie", cats: rawVodCategories), (kind: "series", cats: rawSeriesCategories)
+        ]) { [weak self] in
+            self?.applySmartTags()
+        }
+        applySmartTags(immediately: true)
+    }
+
+    /// Recomputes which categories the tags hide; re-filters the catalog (debounced) when that changed.
+    private func applySmartTags(immediately: Bool = false) {
+        let kids = isKidsProfile
+        func hidden(_ kind: String, _ cats: [XtreamCategory]) -> Set<String> {
+            Set(cats.filter { cat in
+                guard let tag = SmartAI.shared.tag(kind, cat.id) else { return false }
+                return tag.adult > 0.5 || (kids && tag.kids < 0.5)
+            }.map(\.id))
+        }
+        let live = hidden("live", rawLiveCategories)
+        let vod = hidden("movie", rawVodCategories)
+        let series = hidden("series", rawSeriesCategories)
+        guard live != aiHiddenLiveCategoryIDs || vod != aiHiddenVodCategoryIDs || series != aiHiddenSeriesCategoryIDs else { return }
+        aiHiddenLiveCategoryIDs = live
+        aiHiddenVodCategoryIDs = vod
+        aiHiddenSeriesCategoryIDs = series
+        smartTagsTask?.cancel()
+        if immediately {
+            applyVisibleCategories()
+            return
+        }
+        smartTagsTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self, !Task.isCancelled, !self.showAdultContent else { return }
+            self.applyContentFilter()
+        }
+    }
+
+    /// Smart search: the catalog filtered by AI-read filters ("funny hindi movies from the 2010s"). Language and
+    /// genre come from the category tags, years from the title. Best matches first.
+    func smartSearchResults(_ f: SmartAI.SearchFilters, limit: Int = 60) -> (live: [XtreamLiveStream], movies: [XtreamVODStream], series: [XtreamSeries]) {
+        let words = f.keywords.map { $0.lowercased() }
+        func score(kind: String, categoryID: String?, name: String, year: Int?, rating: Double) -> Double? {
+            let tag = SmartAI.shared.tag(kind, categoryID)
+            let genreHit = tag.map { f.genres.contains($0.genre ?? "") } ?? false
+            if !f.languages.isEmpty && !(tag.map { f.languages.contains($0.lang ?? "") } ?? false) { return nil }
+            if !f.genres.isEmpty && !genreHit && words.isEmpty { return nil }
+            if let from = f.yearFrom, (year ?? 0) < from { return nil }
+            if let to = f.yearTo, (year ?? Int.max) > to { return nil }
+            let lower = name.lowercased()
+            let hits = words.filter { lower.contains($0) }.count
+            if !words.isEmpty && hits == 0 && !(!f.genres.isEmpty && genreHit) { return nil }
+            switch f.sort {
+            case "newest": return Double(year ?? 0)
+            case "rating": return rating
+            default: return Double(hits * 3 + (genreHit ? 2 : 0)) + rating / 10
+            }
+        }
+        func pick<T>(_ kind: String, _ items: [T], _ fields: (T) -> (cat: String?, name: String, year: Int?, rating: Double)) -> [T] {
+            guard f.kind == "any" || f.kind == kind else { return [] }
+            var scored: [(Double, T)] = []
+            for item in items {
+                let x = fields(item)
+                if let s = score(kind: kind, categoryID: x.cat, name: x.name, year: x.year, rating: x.rating) { scored.append((s, item)) }
+            }
+            return scored.sorted { $0.0 > $1.0 }.prefix(limit).map(\.1)
+        }
+        let rating = { (s: String?) in Double(s ?? "") ?? 0 }
+        let live = pick("live", allLoadedLiveStreams.filter { !$0.isSectionDivider && (showAdultContent || !isAdultContent($0)) }) {
+            ($0.categoryId?.value, $0.cleanName, nil, 0)
+        }
+        let movies = pick("movie", allLoadedMovies.filter { showAdultContent || !isAdultContent($0) }) {
+            ($0.categoryId?.value, $0.cleanName, SmartAI.year(in: $0.name), rating($0.rating?.value))
+        }
+        let series = pick("series", allLoadedSeries.filter { showAdultContent || !isAdultContent($0) }) {
+            ($0.categoryId?.value, $0.cleanName, SmartAI.year(in: $0.releaseDate ?? "") ?? SmartAI.year(in: $0.name), rating($0.rating?.value))
+        }
+        return (live, movies, series)
+    }
+
+    /// Other channels that look like the same station (another quality or source), best first.
+    func liveAlternatives(to item: PlaybackItem) -> [XtreamLiveStream] {
+        guard item.contentType == .live else { return [] }
+        let key = SmartAI.channelKey(XtreamTextFormatter.format(item.title).cleanTitle)
+        guard !key.isEmpty else { return [] }
+        return Array(allLoadedLiveStreams.lazy.filter {
+            $0.streamId.value != item.streamID && !$0.isSectionDivider && SmartAI.channelKey($0.cleanName) == key
+                && (self.showAdultContent || !self.isAdultContent($0))
+        }.prefix(5))
     }
 
     /// Re-applies the NSFW filter everywhere after the setting changes

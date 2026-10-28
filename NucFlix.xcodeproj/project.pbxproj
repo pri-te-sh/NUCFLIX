@@ -31,6 +31,7 @@
 		A10000210000000000000001 /* MobileVLCKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000220000000000000001 /* MobileVLCKit.xcframework */; };
 		A10000220000000000000001 /* MobileVLCKit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A20000220000000000000001 /* MobileVLCKit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B10000010000000000000000 /* Cloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000010000000000000000 /* Cloud.swift */; };
+		B10000070000000000000000 /* SmartAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000070000000000000000 /* SmartAI.swift */; };
 		B10000020000000000000000 /* CloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000020000000000000000 /* CloudSync.swift */; };
 		B10000030000000000000000 /* CloudAuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000030000000000000000 /* CloudAuthView.swift */; };
 		B10000040000000000000000 /* ProfilePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000040000000000000000 /* ProfilePickerView.swift */; };
@@ -39,6 +40,7 @@
 		B10000210000000000000000 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000010000000000000000 /* FirebaseCore */; };
 		B10000220000000000000000 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000020000000000000000 /* FirebaseAuth */; };
 		B10000230000000000000000 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000030000000000000000 /* FirebaseFirestore */; };
+		B10000250000000000000000 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000050000000000000000 /* FirebaseFunctions */; };
 		B10000240000000000000000 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000040000000000000000 /* GoogleSignIn */; };
 		B10000060000000000000000 /* PairTVView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000060000000000000000 /* PairTVView.swift */; };
 /* End PBXBuildFile section */
@@ -84,6 +86,7 @@
 		A20000220000000000000001 /* MobileVLCKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MobileVLCKit.xcframework; path = Frameworks/MobileVLCKit.xcframework; sourceTree = "<group>"; };
 		B20000010000000000000000 /* Cloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cloud.swift; sourceTree = "<group>"; };
 		B20000020000000000000000 /* CloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSync.swift; sourceTree = "<group>"; };
+		B20000070000000000000000 /* SmartAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartAI.swift; sourceTree = "<group>"; };
 		B20000030000000000000000 /* CloudAuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudAuthView.swift; sourceTree = "<group>"; };
 		B20000040000000000000000 /* ProfilePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePickerView.swift; sourceTree = "<group>"; };
 		B20000050000000000000000 /* LinesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinesView.swift; sourceTree = "<group>"; };
@@ -96,6 +99,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000250000000000000000 /* FirebaseFunctions in Frameworks */,
 				B10000240000000000000000 /* GoogleSignIn in Frameworks */,
 				B10000230000000000000000 /* FirebaseFirestore in Frameworks */,
 				B10000220000000000000000 /* FirebaseAuth in Frameworks */,
@@ -153,6 +157,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000020000000000000000 /* CloudSync.swift */,
+				B20000070000000000000000 /* SmartAI.swift */,
 				B20000010000000000000000 /* Cloud.swift */,
 				A20000060000000000000001 /* XtreamAPIService.swift */,
 				A20000070000000000000001 /* AppState.swift */,
@@ -214,6 +219,7 @@
 				BA0000020000000000000000 /* FirebaseAuth */,
 				BA0000030000000000000000 /* FirebaseFirestore */,
 				BA0000040000000000000000 /* GoogleSignIn */,
+				BA0000050000000000000000 /* FirebaseFunctions */,
 			);
 			productName = NucFlix;
 			productReference = A00000010000000000000001 /* NucFlix.app */;
@@ -280,6 +286,7 @@
 				B10000040000000000000000 /* ProfilePickerView.swift in Sources */,
 				B10000030000000000000000 /* CloudAuthView.swift in Sources */,
 				B10000020000000000000000 /* CloudSync.swift in Sources */,
+				B10000070000000000000000 /* SmartAI.swift in Sources */,
 				B10000010000000000000000 /* Cloud.swift in Sources */,
 				A10000010000000000000001 /* NucFlixApp.swift in Sources */,
 				A10000020000000000000001 /* FlexibleDecodable.swift in Sources */,
@@ -465,6 +472,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B90000020000000000000000 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
+		};
+		BA0000050000000000000000 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B90000010000000000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

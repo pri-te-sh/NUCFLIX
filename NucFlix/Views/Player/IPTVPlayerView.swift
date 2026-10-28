@@ -26,6 +26,13 @@ struct IPTVPlayerView: View {
     private static let creditsWindowSeconds: Double = 25
     private static let maxAutoplaysBeforeCheck: Int = 3
 
+    // AI checks (SmartAI): real start of the credits, Skip Intro, broken live channels
+    @State private var ai = PlayerAI()
+    @State private var videoOutput: AVPlayerItemVideoOutput?
+    @State private var aiCreditsCountdown: Int?
+    @State private var aiCreditsTask: Task<Void, Never>?
+    private static let aiCreditsCountdownSeconds = 10
+
     // Dual Playback Engines: AVPlayer (for HLS/PiP) + VLCMediaPlayer (for MKV/TS/Dolby/Multi-Sub)
     @State private var avPlayer: AVPlayer?
     @State private var vlcPlayer: VLCMediaPlayer?
@@ -216,6 +223,8 @@ struct IPTVPlayerView: View {
             // Netflix "Next Episode" credits pill / end-of-episode countdown / "Still watching?"
             if !isScreenLocked && playerError == nil {
                 nextEpisodeOverlay
+                skipIntroOverlay
+                offAirOverlay
             }
 
             if let playerError {
@@ -244,11 +253,14 @@ struct IPTVPlayerView: View {
                 appState.loadEPGIfNeeded(for: streamID)
             }
             loadStream()
+            startAI()
             scheduleAutoHideControls()
             resolveNextEpisode()
         }
         .onDisappear {
             isDismissed = true
+            ai.stop()
+            aiCreditsTask?.cancel()
             endCountdownTask?.cancel()
             hideControlsTask?.cancel()
             avEngineSetupTask?.cancel()
@@ -1363,6 +1375,7 @@ struct IPTVPlayerView: View {
                     self.refreshVLCTracks()
                 }
                 self.saveProgressIfNeeded(position: elapsedSec, duration: max(totalSec, 0))
+                self.ai.tick(position: elapsedSec, duration: max(totalSec, 0), playing: self.isPlaying)
             }
         }
 
@@ -1422,6 +1435,10 @@ struct IPTVPlayerView: View {
             Task { @MainActor in
                 guard self.avPlayer === observedPlayer else { return }
                 self.isExternalPlaybackActive = active
+                if active, let output = self.videoOutput {
+                    observedPlayer.currentItem?.remove(output)
+                    self.videoOutput = nil
+                }
             }
         }
 
@@ -1460,6 +1477,16 @@ struct IPTVPlayerView: View {
             let asset = AVURLAsset(url: playableURL)
             let playerItem = AVPlayerItem(asset: asset)
             applyStreamQualityPreferences(to: playerItem)
+            // Frames for the AI checks. Left off while casting so nothing gets in the way of AirPlay video.
+            if !self.isAirPlayActive && !self.isExternalPlaybackActive {
+                let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                ])
+                playerItem.add(output)
+                self.videoOutput = output
+            } else {
+                self.videoOutput = nil
+            }
             newPlayer.replaceCurrentItem(with: playerItem)
 
             // Seamless automatic fallback to MobileVLCKit ONLY when not AirPlaying
@@ -1555,6 +1582,8 @@ struct IPTVPlayerView: View {
                             position: effectiveCurrent,
                             duration: self.totalDuration > 1 ? self.totalDuration : 0
                         )
+                        self.ai.tick(position: effectiveCurrent, duration: self.totalDuration,
+                                     playing: self.isPlaying && !self.isBuffering)
                     }
                 }
             }
@@ -1666,6 +1695,8 @@ struct IPTVPlayerView: View {
         }
 
         let prepared = appState.prepareInPlacePlayback(next)
+        aiCreditsTask?.cancel()
+        aiCreditsCountdown = nil
         // Reset per-item playback state (currentTime first so cleanup doesn't save stale progress)
         currentTime = 0
         totalDuration = 0
@@ -1682,6 +1713,7 @@ struct IPTVPlayerView: View {
         useVLCEngine = (isAirPlayActive || isExternalPlaybackActive) ? false : shouldDefaultToVLC
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         loadStream()
+        startAI()
         resolveNextEpisode()
         withAnimation(.easeInOut(duration: 0.2)) {
             showControls = true
@@ -1741,7 +1773,7 @@ struct IPTVPlayerView: View {
                 .padding(.bottom, 36)
             }
             .transition(.opacity)
-        } else if isInCreditsWindow, nextEpisodeItem != nil, !dismissedNextEpisodePrompt {
+        } else if isInCreditsWindow || ai.creditsReachedAt != nil, nextEpisodeItem != nil, !dismissedNextEpisodePrompt {
             VStack {
                 Spacer()
                 HStack(spacing: 12) {
@@ -1764,15 +1796,17 @@ struct IPTVPlayerView: View {
                     Button {
                         playNextEpisode(automatic: false)
                     } label: {
-                        let progress = appState.autoplayNextEpisode
-                            ? CGFloat(1 - min(remainingSeconds / Self.creditsWindowSeconds, 1))
-                            : 0
+                        let progress: CGFloat = !appState.autoplayNextEpisode ? 0
+                            : aiCreditsCountdown.map { CGFloat(Self.aiCreditsCountdownSeconds - $0) / CGFloat(Self.aiCreditsCountdownSeconds) }
+                            ?? CGFloat(1 - min(remainingSeconds / Self.creditsWindowSeconds, 1))
                         HStack(spacing: 8) {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 15, weight: .bold))
                             Text("Next Episode")
                                 .font(.system(size: 15, weight: .bold))
+                                .lineLimit(1)
                         }
+                        .fixedSize()
                         .foregroundStyle(.black)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
@@ -1839,6 +1873,166 @@ struct IPTVPlayerView: View {
         }
     }
 
+    // MARK: - AI checks (credits, Skip Intro, broken live channels)
+
+    private func startAI() {
+        ai.grabFrame = { await grabFrame() }
+        ai.onCreditsReached = { creditsReachedByAI() }
+        ai.start(item: item, lineID: appState.activeLineID)
+    }
+
+    /// The frame on screen as a small JPEG (nil while casting or before the first picture).
+    private func grabFrame() async -> Data? {
+        guard !isDismissed, !isAirPlayActive, !isExternalPlaybackActive else { return nil }
+        if useVLCEngine {
+            guard let vlcPlayer else { return nil }
+            return await SmartAI.snapshot(vlcPlayer)
+        }
+        guard let output = videoOutput, let avItem = avPlayer?.currentItem, avItem.outputs.contains(output) else { return nil }
+        let time = output.itemTime(forHostTime: CACurrentMediaTime())
+        guard let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { return nil }
+        return SmartAI.jpeg(from: buffer)
+    }
+
+    /// The credits really started: the title counts as watched, and the next episode is offered with a short countdown.
+    private func creditsReachedByAI() {
+        guard !isDismissed, totalDuration > 1 else { return }
+        lastSavedProgressSecond = currentTime
+        appState.recordPlaybackProgress(item: item, positionSeconds: totalDuration, durationSeconds: totalDuration)
+        guard item.contentType == .seriesEpisode, nextEpisodeItem != nil, !dismissedNextEpisodePrompt,
+              appState.autoplayNextEpisode else { return }
+        let itemID = item.id
+        aiCreditsTask?.cancel()
+        aiCreditsCountdown = Self.aiCreditsCountdownSeconds
+        aiCreditsTask = Task { @MainActor in
+            while let left = aiCreditsCountdown, left > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, !isDismissed, item.id == itemID else { return }
+                if dismissedNextEpisodePrompt {
+                    aiCreditsCountdown = nil
+                    return
+                }
+                if isPlaying { aiCreditsCountdown = left - 1 } // paused: hold the countdown
+            }
+            guard !Task.isCancelled, !isDismissed, item.id == itemID, !dismissedNextEpisodePrompt,
+                  nextEpisodeItem != nil else { return }
+            if consecutiveAutoplays >= Self.maxAutoplaysBeforeCheck {
+                if isPlaying { togglePlayPause() }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    showControls = false
+                    showStillWatchingPrompt = true
+                }
+            } else {
+                playNextEpisode(automatic: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var skipIntroOverlay: some View {
+        if let target = ai.skipIntroTo, endOfEpisodeCountdown == nil, !showStillWatchingPrompt {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        ai.dismissSkipIntro()
+                        seekTo(seconds: target)
+                        scheduleAutoHideControls()
+                    } label: {
+                        Text("Skip Intro")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.8), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, showControls ? 120 : 36)
+            }
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.3), value: showControls)
+        }
+    }
+
+    @ViewBuilder
+    private var offAirOverlay: some View {
+        if let message = ai.offAirMessage, item.contentType == .live {
+            let alternative = appState.liveAlternatives(to: item).first
+            VStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(AppTheme.netflixRed)
+                        Text(message)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    HStack(spacing: 10) {
+                        if let alternative {
+                            Button {
+                                switchChannel(to: alternative)
+                            } label: {
+                                Label("Try \(alternative.cleanName)", systemImage: "play.fill")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(.black)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(Color.white, in: RoundedRectangle(cornerRadius: 4))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Button("Keep Watching") {
+                            withAnimation { ai.dismissOffAir() }
+                        }
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(16)
+                .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
+                .padding(.top, 24)
+                .padding(.horizontal, 28)
+                Spacer()
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Switches to another live channel inside the same player.
+    private func switchChannel(to channel: XtreamLiveStream) {
+        guard !isDismissed else { return }
+        ai.stop()
+        let prepared = appState.prepareInPlacePlayback(.fromLive(channel))
+        currentTime = 0
+        totalDuration = 0
+        lastSavedProgressSecond = 0
+        audioTracks = []
+        subtitleTracks = []
+        selectedAudioTrack = -1
+        selectedSubtitleTrack = -1
+        playerError = nil
+        stallRetryCount = 0
+        item = prepared
+        useVLCEngine = (isAirPlayActive || isExternalPlaybackActive) ? false : shouldDefaultToVLC
+        appState.loadEPGIfNeeded(for: channel.streamId.value)
+        loadStream()
+        startAI()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showControls = true
+        }
+        scheduleAutoHideControls()
+    }
+
     // MARK: - Throttled Progress Persistence
 
     /// Persists progress at most every `progressSaveInterval` seconds of playback movement.
@@ -1846,9 +2040,11 @@ struct IPTVPlayerView: View {
         guard position.isFinite, position > 3 else { return }
         guard abs(position - lastSavedProgressSecond) >= Self.progressSaveInterval else { return }
         lastSavedProgressSecond = position
+        // Once the credits have started the title counts as watched.
+        let pastCredits = duration > 1 && ai.pastCredits(position)
         appState.recordPlaybackProgress(
             item: item,
-            positionSeconds: position,
+            positionSeconds: pastCredits ? duration : position,
             durationSeconds: max(duration, 0)
         )
         updateNowPlayingInfo()
@@ -1858,9 +2054,10 @@ struct IPTVPlayerView: View {
     private func saveProgressNow() {
         guard currentTime > 2 else { return }
         lastSavedProgressSecond = currentTime
+        let pastCredits = totalDuration > 1 && ai.pastCredits(currentTime)
         appState.recordPlaybackProgress(
             item: item,
-            positionSeconds: currentTime,
+            positionSeconds: pastCredits ? totalDuration : currentTime,
             durationSeconds: totalDuration
         )
     }
@@ -1941,6 +2138,7 @@ struct IPTVPlayerView: View {
             avPlayer.pause()
             self.avPlayer = nil
         }
+        videoOutput = nil
         if let vlcPlayer {
             vlcDelegate.onTimeChanged = nil
             vlcPlayer.stop()
