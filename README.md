@@ -13,8 +13,9 @@
 ![Swift](https://img.shields.io/badge/SwiftUI-F05138?style=for-the-badge&logo=swift&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-DD2C00?style=for-the-badge&logo=firebase&logoColor=white)
 ![Media3](https://img.shields.io/badge/Media3%20ExoPlayer-3DDC84?style=for-the-badge&logo=android&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-E50914?style=for-the-badge)](LICENSE)
 
-[Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Getting started](#-getting-started) · [Project layout](#-project-layout) · [Privacy](#-privacy--security)
+[Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Getting started](#-getting-started) · [Project layout](#-project-layout) · [Privacy](#-privacy--security) · [License](#-license)
 
 </div>
 
@@ -221,6 +222,15 @@ cd firebase && npx firebase emulators:start --only auth,firestore
 - [x] TV pairing, synced My List and Continue Watching
 - [ ] "Now playing" hand-off: move what's playing between phone and TV
 - [ ] Sync recommendation history (currently stored per device)
+
+## 📄 License
+
+NucFlix is released under the [MIT License](LICENSE). © 2026 pri-te-sh.
+
+Bundled third-party pieces keep their own licenses:
+- The Firebase JavaScript SDK in `NucFlixFireTV/web/vendor/firebase/` (Apache 2.0).
+- The Bebas Neue font in `NucFlixFireTV/web/fonts/` (SIL Open Font License, see `OFL.txt`).
+- MobileVLCKit, downloaded by `scripts/fetch-vlckit.sh` (LGPL 2.1).
 
 ## ⚖️ Disclaimer
 
