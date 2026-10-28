@@ -217,6 +217,10 @@ struct ActiveDownloadItem: Identifiable, Equatable, Codable {
     var retryCount: Int = 0
     /// Why the item is waiting or why it failed ("Waiting for a free connection…"); shown instead of progress.
     var statusNote: String?
+    /// Bytes already saved in the item's partial file (pieced downloads); a retry continues from here.
+    var committedBytes: Int64?
+    /// Full size of the remote file, from the server's Content-Range.
+    var remoteSize: Int64?
 
     var cleanTitle: String {
         XtreamTextFormatter.format(title).cleanTitle
@@ -359,6 +363,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     /// Downloads that gave up after their retries. Kept (and persisted) until the user retries or removes
     /// them, so a failure never just makes an item vanish from the list.
     private(set) var failedDownloads: [ActiveDownloadItem] = []
+    /// Where the provider redirected an item's last piece (its video server, with a session token). Later
+    /// pieces go there directly instead of through the provider's portal, which on a 1-connection line can
+    /// count as a new connection. Memory only: the token may identify the login.
+    @ObservationIgnored private var edgeURLs: [String: URL] = [:]
     /// The line's `max_connections` from the provider. Every download is one connection, so running more
     /// than the line allows only gets refused (HTTP 509/884) or kicks another stream off.
     var lineMaxConnections: Int? {
@@ -499,6 +507,38 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     }()
 
     private static let stateURL: URL = stateDirectory.appendingPathComponent("download_state.json")
+
+    /// Partial files of pieced downloads (kept across launches so downloads resume where they stopped).
+    private static let partialDirectory: URL = {
+        let dir = downloadsDirectory.appendingPathComponent(".partial", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    /// Size of each byte-range request. IPTV servers usually support ranges but send no ETag/Last-Modified,
+    /// so URLSession can't resume an interrupted transfer; downloading in pieces means an interruption only
+    /// costs the piece in flight.
+    private static let pieceSize: Int64 = 64 * 1024 * 1024
+
+    private static func partialURL(for itemID: String) -> URL {
+        let safeName = itemID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? itemID
+        return partialDirectory.appendingPathComponent("\(safeName).part")
+    }
+
+    private func discardPartial(for itemID: String) {
+        try? FileManager.default.removeItem(at: Self.partialURL(for: itemID))
+        edgeURLs.removeValue(forKey: itemID)
+    }
+
+    /// "bytes 0-67108863/278709596" -> (0, 67108863, 278709596)
+    private static func contentRange(of response: URLResponse?) -> (start: Int64, end: Int64, total: Int64)? {
+        guard let http = response as? HTTPURLResponse,
+              let header = http.value(forHTTPHeaderField: "Content-Range"),
+              let match = header.range(of: #"bytes\s+(\d+)-(\d+)/(\d+)"#, options: .regularExpression) else { return nil }
+        let parts = header[match].dropFirst(6).split(whereSeparator: { $0 == "-" || $0 == "/" }).compactMap { Int64($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 3 else { return nil }
+        return (parts[0], parts[1], parts[2])
+    }
 
     private static let resumeDataDirectory: URL = {
         let dir = stateDirectory.appendingPathComponent("ResumeData", isDirectory: true)
@@ -1305,6 +1345,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                 linked.task.cancel()
             }
             deletePersistedResumeData(for: itemID)
+            discardPartial(for: itemID)
         }
         advanceQueueIfNeeded()
         persistStateNow()
@@ -1385,6 +1426,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     func clearQueue() {
         for item in queuedDownloads {
             deletePersistedResumeData(for: item.id)
+            discardPartial(for: item.id)
         }
         queuedDownloads.removeAll()
         persistStateNow()
@@ -1411,6 +1453,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         failedDownloads.removeAll { $0.id == id }
         if failedDownloads.isEmpty { lastDownloadError = nil }
         deletePersistedResumeData(for: id)
+        discardPartial(for: id)
         persistStateNow()
     }
 
@@ -1458,12 +1501,22 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                 persistStateNow()
                 return
             }
-            var request = URLRequest(url: url)
+            let offsetHint = item.committedBytes ?? 0
+            var request = URLRequest(url: (offsetHint > 0 ? edgeURLs[active.id] : nil) ?? url)
             request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+            // Continue after the bytes already on disk; the partial file is the source of truth.
+            let partSize = (try? FileManager.default.attributesOfItem(atPath: Self.partialURL(for: active.id).path))?[.size] as? Int64 ?? 0
+            let offset = min(item.committedBytes ?? 0, partSize)
+            if offset == 0 { discardPartial(for: active.id) }
+            item.committedBytes = offset
+            var end = offset + Self.pieceSize - 1
+            if let size = item.remoteSize, size > 0 { end = min(end, size - 1) }
+            request.setValue("bytes=\(offset)-\(end)", forHTTPHeaderField: "Range")
             task = targetSession.downloadTask(with: request)
-            // Fresh transfer from byte 0.
-            item.progress = 0
-            item.bytesWritten = 0
+            if offset == 0 {
+                item.progress = 0
+                item.bytesWritten = 0
+            }
         }
 
         // taskDescription is how tasks are re-linked to items after a relaunch (getAllTasks) and
@@ -1485,6 +1538,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             linked.task.cancel()
         }
         deletePersistedResumeData(for: id)
+        discardPartial(for: id)
         advanceQueueIfNeeded()
         persistStateNow()
     }
@@ -1509,6 +1563,8 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         }
         downloadTasks.removeAll()
         deleteAllPersistedResumeData()
+        try? FileManager.default.removeItem(at: Self.partialDirectory)
+        try? FileManager.default.createDirectory(at: Self.partialDirectory, withIntermediateDirectories: true)
         failedDownloads.removeAll()
         lastDownloadError = nil
         for item in downloadedItems {
@@ -1598,6 +1654,13 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         guard var active = activeDownloads[itemID], isCurrentTask(task, kind: kind, for: itemID) else { return }
 
         let scale = min(max(active.sizeScaleFactor, 0.1), 1.0)
+        // Pieced download: the task only reports bytes of the current piece.
+        var totalBytesWritten = totalBytesWritten
+        var totalBytesExpectedToWrite = totalBytesExpectedToWrite
+        if let range = Self.contentRange(of: task.response) {
+            totalBytesWritten += range.start
+            totalBytesExpectedToWrite = range.total
+        }
         let newBytesWritten = Int64(Double(totalBytesWritten) * scale)
         // Resumed transfers must never move progress backwards (e.g. a late/odd counter after a handoff).
         if downloadTasks[itemID]?.startedFromResumeData == true && newBytesWritten < active.bytesWritten {
@@ -1625,6 +1688,9 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         let http = downloadTask.response as? HTTPURLResponse
         let statusCode = http?.statusCode
         let mimeType = http?.mimeType?.lowercased()
+        let pieceRange = Self.contentRange(of: http)
+        let servedFrom = http?.url
+        let requestedURL = downloadTask.originalRequest?.url
 
         // `location` is deleted as soon as this method returns, so move it synchronously right now
         // into a staging file on the same volume; final validation/rename happens on main.
@@ -1652,7 +1718,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                 stagedURL: stagedURL,
                 stagingError: stagingError,
                 statusCode: statusCode,
-                mimeType: mimeType
+                mimeType: mimeType,
+                pieceRange: pieceRange,
+                servedFrom: servedFrom,
+                requestedURL: requestedURL
             )
         }
     }
@@ -1666,7 +1735,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         stagedURL: URL?,
         stagingError: Error?,
         statusCode: Int?,
-        mimeType: String?
+        mimeType: String?,
+        pieceRange: (start: Int64, end: Int64, total: Int64)?,
+        servedFrom: URL? = nil,
+        requestedURL: URL? = nil
     ) {
         // A task we were handing off may have finished just before the cancel landed: its file is
         // complete, so accept it (and drop any replacement transfer below).
@@ -1681,11 +1753,26 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         let safeFileName = "\(active.id).\(active.containerExtension)"
         let destinationURL = Self.downloadsDirectory.appendingPathComponent(safeFileName)
 
+        // A remembered video-server address stopped working (token expired): go back through the portal.
+        if let edge = edgeURLs[itemID], requestedURL == edge, !(statusCode.map { (200..<300).contains($0) } ?? false) {
+            if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) }
+            edgeURLs.removeValue(forKey: itemID)
+            if let linked = downloadTasks[itemID], linked.key == DownloadTaskKey(kind: kind, task: task) {
+                downloadTasks.removeValue(forKey: itemID)
+            }
+            beginDownload(active: active, clearsFailure: false)
+            return
+        }
+        if pieceRange != nil, let servedFrom, servedFrom != requestedURL,
+           let code = statusCode, (200..<300).contains(code) {
+            edgeURLs[itemID] = servedFrom
+        }
+
         // A line with no free connection answers 509/884 (or a near-empty body). That isn't a broken
         // download: wait and try again instead of failing it.
         let stagedSize = stagedURL.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.size] as? Int64 } ?? 0
         let lineBusy = statusCode.map(Self.busyStatusCodes.contains) ?? false
-            || (stagedURL != nil && stagedSize < 4096 && (statusCode.map { (200..<300).contains($0) } ?? true))
+            || (stagedURL != nil && stagedSize < 4096 && pieceRange == nil && (statusCode.map { (200..<300).contains($0) } ?? true))
         if lineBusy {
             if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) }
             if waitForFreeConnection(active, task: task, kind: kind) { return }
@@ -1704,12 +1791,43 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             }
         }
 
+        // Pieced download: add this piece to the partial file, then fetch the next one (or finish).
+        var finishedFileURL = stagedURL
+        if !lineBusy, rejectionReason == nil, let stagedURL, let piece = pieceRange {
+            switch appendPiece(stagedURL, piece: piece, to: active) {
+            case .next(let updated):
+                activeDownloads[itemID] = updated
+                if let linked = downloadTasks[itemID], linked.key == DownloadTaskKey(kind: kind, task: task) {
+                    downloadTasks.removeValue(forKey: itemID)
+                }
+                persistStateNow()
+                beginDownload(active: updated, clearsFailure: false)
+                return
+            case .complete:
+                finishedFileURL = Self.partialURL(for: itemID)
+            case .restart(let reset):
+                // The piece didn't line up with what's on disk (file changed on the server): start over.
+                activeDownloads[itemID] = reset
+                if let linked = downloadTasks[itemID], linked.key == DownloadTaskKey(kind: kind, task: task) {
+                    downloadTasks.removeValue(forKey: itemID)
+                }
+                persistStateNow()
+                beginDownload(active: reset, clearsFailure: false)
+                return
+            case .failed(let reason):
+                rejectionReason = reason
+            }
+        } else if !lineBusy, rejectionReason == nil, stagedURL != nil {
+            // The server ignored the Range header and sent the whole file.
+            discardPartial(for: itemID)
+        }
+
         if lineBusy {
             recordFailure(active, reason: "Your IPTV line stayed busy, so \(active.cleanTitle) couldn’t download. Close other players using the line, then retry.")
         } else if let rejectionReason {
             if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) }
             recordFailure(active, reason: rejectionReason)
-        } else if let stagedURL {
+        } else if let stagedURL = finishedFileURL {
             do {
                 if FileManager.default.fileExists(atPath: destinationURL.path) {
                     try FileManager.default.removeItem(at: destinationURL)
@@ -1859,6 +1977,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         guard var active = activeDownloads[itemID], isCurrentTask(task, kind: kind, for: itemID) else { return }
         downloadTasks.removeValue(forKey: itemID)
         releaseKeepAlive(for: itemID)
+        edgeURLs.removeValue(forKey: itemID) // retry through the portal for a fresh video-server address
 
         // Persist resume data to disk so retries — including after a relaunch — resume instead of restart.
         if let resumeData {
@@ -1888,6 +2007,53 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         recordFailure(active, reason: "Download interrupted for \(active.cleanTitle): \(error.localizedDescription)")
         advanceQueueIfNeeded()
         persistStateNow()
+    }
+
+    private enum PieceOutcome {
+        case next(ActiveDownloadItem)
+        case complete
+        case restart(ActiveDownloadItem)
+        case failed(String)
+    }
+
+    /// Main thread. Appends a finished byte-range piece to the item's partial file.
+    private func appendPiece(_ staged: URL, piece: (start: Int64, end: Int64, total: Int64), to active: ActiveDownloadItem) -> PieceOutcome {
+        let fm = FileManager.default
+        let part = Self.partialURL(for: active.id)
+        let committed = piece.start == 0 ? 0 : (active.committedBytes ?? 0)
+        var updated = active
+        guard piece.start == committed, active.remoteSize == nil || active.remoteSize == piece.total || committed == 0 else {
+            try? fm.removeItem(at: staged)
+            discardPartial(for: active.id)
+            updated.committedBytes = 0
+            updated.remoteSize = nil
+            return .restart(updated)
+        }
+        do {
+            if committed == 0 {
+                try? fm.removeItem(at: part)
+                try fm.moveItem(at: staged, to: part)
+            } else {
+                let handle = try FileHandle(forWritingTo: part)
+                defer { try? handle.close() }
+                try handle.seek(toOffset: UInt64(committed))
+                try handle.truncate(atOffset: UInt64(committed)) // drop anything past the last saved piece
+                let input = try FileHandle(forReadingFrom: staged)
+                defer { try? input.close() }
+                while let chunk = try input.read(upToCount: 4 * 1024 * 1024), !chunk.isEmpty {
+                    try handle.write(contentsOf: chunk)
+                }
+                try? fm.removeItem(at: staged)
+            }
+        } catch {
+            try? fm.removeItem(at: staged)
+            return .failed("Couldn’t save \(active.cleanTitle): \(error.localizedDescription)")
+        }
+        updated.committedBytes = piece.end + 1
+        updated.remoteSize = piece.total
+        updated.retryCount = 0
+        updated.statusNote = nil
+        return updated.committedBytes! >= piece.total ? .complete : .next(updated)
     }
 
     /// Keeps a refused item in its slot and retries it later. Returns false once the retries are used up.
