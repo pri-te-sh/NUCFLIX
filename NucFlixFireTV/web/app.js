@@ -831,10 +831,57 @@
     markDirty();
   }
 
+  /** Finished: 92% through or into the last 90 s (people stop during the credits). Same rule as the iPhone app. */
+  function isWatched(position, duration) {
+    if (!duration || duration < 60) return false;
+    return position / duration >= 0.92 || duration - position <= 90;
+  }
+
   function resumeFor(h) {
     if (!h || !h.duration || h.duration < 60) return 0;
-    const pct = h.position / h.duration;
-    return (h.position > 20 && pct < 0.95) ? h.position : 0;
+    return (h.position > 20 && !isWatched(h.position, h.duration)) ? h.position : 0;
+  }
+
+  // Next episode for series whose latest episode is finished, keyed by series ID ({ forUpdate, entry }).
+  const upNext = new Map();
+
+  /** Continue Watching: titles in progress, plus "Up next" for series whose latest episode is finished. */
+  function continueWatching() {
+    const rows = [];
+    for (const h of S.history) {
+      if (h.contentType === 'live') continue;
+      if (resumeFor(h) > 0) { rows.push(h); continue; }
+      if (h.contentType === 'series' && isWatched(h.position, h.duration)) {
+        const next = upNext.get(String(h.seriesID));
+        if (next && next.forUpdate === h.updatedAt && next.entry) rows.push(next.entry);
+      }
+    }
+    return rows.slice(0, 20);
+  }
+
+  /** Looks up the episode after each finished one (needs the series' episode list), then redraws Home. */
+  async function refreshUpNext() {
+    let changed = false;
+    for (const h of S.history) {
+      if (h.contentType !== 'series' || !isWatched(h.position, h.duration)) continue;
+      const known = upNext.get(String(h.seriesID));
+      if (known && known.forUpdate === h.updatedAt) continue;
+      const creds = S.creds;
+      const sInfo = await XtreamAPI.fetchSeriesInfo(creds, h.seriesID).catch(() => null);
+      if (S.creds !== creds || !sInfo) return;
+      const all = flattenEpisodes(sInfo);
+      const idx = all.findIndex(e => e.episodeId === String(h.episodeID));
+      const ep = idx >= 0 ? all[idx + 1] : null;
+      upNext.set(String(h.seriesID), {
+        forUpdate: h.updatedAt,
+        entry: ep && Object.assign({}, h, {
+          key: `upnext-${h.seriesID}`, episodeID: ep.episodeId, season: ep.season, episodeNum: ep.episodeNum,
+          episodeTitle: ep.cleanTitle, ext: ep.containerExtension, position: 0, duration: 0, upNext: true
+        })
+      });
+      changed = true;
+    }
+    if (changed) refreshVisible();
   }
 
   // ------------------------------------------------------------------ EPG cache
@@ -1165,7 +1212,7 @@
       const s = S.cat.seriesById.get(Number(h.seriesID));
       if (s) { entry = { kind: 'series', data: s }; art = s.cover || art; }
     }
-    const pct = h.duration ? clamp(h.position / h.duration, 0.03, 1) * 100 : 3;
+    const pct = h.upNext ? 0 : (h.duration ? clamp(h.position / h.duration, 0.03, 1) * 100 : 3);
     const title = XtreamTextFormatter.format(h.title).cleanTitle;
     const left = Math.max(1, Math.ceil(((h.duration || 0) - (h.position || 0)) / 60));
     return {
@@ -1179,14 +1226,14 @@
         else openDetail('series', entry.data);
       },
       info: () => ({
-        meta: [title, h.contentType === 'series' ? `S${h.season}:E${h.episodeNum} “${h.episodeTitle || ''}”` : 'Film', `${left} min left`],
+        meta: [title, h.contentType === 'series' ? `S${h.season}:E${h.episodeNum} “${h.episodeTitle || ''}”` : 'Film', h.upNext ? 'Up next' : `${left} min left`],
         text: entry && entry.kind === 'series' ? entry.data.plot : ''
       }),
       more: entry && entry.kind === 'movie' ? () => moviePlot(entry.data) : null,
       html: `
         <div class="ls-art">${artwork(art, title, { w: 480 })}</div>
         <div class="ls-title">${esc(title)}</div>
-        <div class="ls-bar"><i style="width:${pct.toFixed(1)}%"></i></div>`
+        ${h.upNext ? `<div class="ls-upnext">Up next • S${h.season}:E${h.episodeNum}</div>` : `<div class="ls-bar"><i style="width:${pct.toFixed(1)}%"></i></div>`}`
     };
   }
 
@@ -1207,16 +1254,18 @@
 
   function episodeItem(series, sInfo, ep) {
     const pr = S.episodeProgress[ep.episodeId];
-    const pct = pr && pr.d ? clamp(pr.p / pr.d, 0, 1) * 100 : 0;
-    const resume = pr && pr.d && pr.p > 20 && pr.p / pr.d < 0.95 ? pr.p : 0;
+    const watched = !!(pr && isWatched(pr.p, pr.d));
+    const pct = watched ? 100 : (pr && pr.d ? clamp(pr.p / pr.d, 0, 1) * 100 : 0);
+    const resume = pr && pr.d && pr.p > 20 && !watched ? pr.p : 0;
     return {
       fk: `ep-${ep.episodeId}`,
       act: () => playEpisode(series, sInfo, ep, resume),
-      info: () => ({ meta: [`S${ep.season}:E${ep.episodeNum}`, ep.cleanTitle, ep.duration], text: ep.plot }),
+      info: () => ({ meta: [`S${ep.season}:E${ep.episodeNum}`, ep.cleanTitle, ep.duration, watched ? 'Watched' : ''], text: ep.plot }),
       html: `
         <div class="ls-art">${artwork(ep.movieImage || series.cover, 'E' + ep.episodeNum, { w: 480 })}</div>
         <div class="ls-title">${ep.episodeNum}. ${esc(ep.cleanTitle)}</div>
-        ${pct ? `<div class="ls-bar"><i style="width:${pct.toFixed(1)}%"></i></div>` : ''}`
+        ${watched ? `<div class="ls-watched">${ICON.check} Watched</div>` : ''}
+        ${pct ? `<div class="ls-bar${watched ? ' done' : ''}"><i style="width:${pct.toFixed(1)}%"></i></div>` : ''}`
     };
   }
 
@@ -1705,7 +1754,8 @@
         : posterRow(r.id, r.title, r.items.slice(0, 20));
 
       const rows = [];
-      const cw = S.history.filter(h => h.contentType !== 'live' && resumeFor(h) > 0).slice(0, 20);
+      const cw = continueWatching();
+      refreshUpNext();
       if (cw.length) rows.push(Rows.html({ id: 'cw', title: S.cloud.profile ? `Continue Watching for ${S.cloud.profile.name}` : 'Continue Watching', style: 'landscape', items: cw.map(cwItem) }));
       f.rails.slice(0, 2).forEach(r => rows.push(rails(r)));
       const live = this.liveNow();
@@ -1905,7 +1955,7 @@
       const rows = [];
       const mine = favoriteEntries();
       if (mine.length) rows.push(posterRow('ml-list', 'My List', mine));
-      const cw = S.history.filter(h => h.contentType !== 'live' && resumeFor(h) > 0).slice(0, 20);
+      const cw = continueWatching();
       if (cw.length) rows.push(Rows.html({ id: 'ml-cw', title: 'Continue Watching', style: 'landscape', items: cw.map(cwItem) }));
       const chans = favoriteEntries(['live']).map(e => e.data);
       if (chans.length) rows.push(Rows.html({ id: 'ml-live', title: 'Favorite Channels', style: 'landscape', items: chans.map(ch => liveItem(ch, chans)) }));

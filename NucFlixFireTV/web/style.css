@@ -559,6 +559,10 @@ img.fit { object-fit: contain !important; object-position: center !important; }
 .row.landscape .ri.focused .ls-title { color: #fff; }
 .ls-bar { position: absolute; left: 0; right: 0; top: 247px; height: 5px; z-index: 3; background: rgba(255, 255, 255, 0.28); border-radius: 0 0 10px 10px; overflow: hidden; }
 .ls-bar i { display: block; height: 100%; background: var(--netflix-red); }
+.ls-bar.done i { background: rgba(255, 255, 255, 0.55); }
+.ls-watched { position: absolute; top: 12px; right: 12px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 6px; background: rgba(0, 0, 0, 0.72); font-size: 17px; font-weight: 700; color: #fff; }
+.ls-watched .ico { width: 18px; height: 18px; }
+.ls-upnext { position: absolute; left: 0; right: 0; top: 212px; z-index: 3; padding: 8px 14px; font-size: 17px; font-weight: 700; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.85)); }
 
 /* Top 10 rows: giant outlined rank beside the poster */
 .row.top10 .ri { width: 400px; height: 360px; background: transparent; overflow: visible; display: flex; align-items: flex-end; }
