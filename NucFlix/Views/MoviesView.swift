@@ -277,12 +277,12 @@ struct MovieDetailView: View {
                             Button {
                                 var updated = movie
                                 updated.containerExtension = resolvedExtension
-                                appState.startPlayback(.fromMovie(updated, resumeSeconds: savedProgress?.positionSeconds ?? 0))
+                                appState.startPlayback(.fromMovie(updated, resumeSeconds: savedProgress?.resumePosition ?? 0))
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "play.fill")
                                         .font(.system(size: 17, weight: .bold))
-                                    Text(savedProgress != nil ? "Resume" : "Play")
+                                    Text(savedProgress.map { $0.isWatched ? "Play Again" : "Resume" } ?? "Play")
                                         .font(.system(size: 16, weight: .bold))
                                 }
                                 .frame(maxWidth: .infinity)
@@ -419,7 +419,7 @@ struct MovieDetailView: View {
         } else if let downloaded = downloadManager.downloadedItem(for: itemID) {
             Menu {
                 Button {
-                    appState.startPlayback(downloaded.toPlaybackItem(resumeSeconds: savedProgress?.positionSeconds ?? 0))
+                    appState.startPlayback(downloaded.toPlaybackItem(resumeSeconds: savedProgress?.resumePosition ?? 0))
                 } label: {
                     Label("Play Offline (\(downloaded.formattedSize))", systemImage: "play.fill")
                 }
@@ -499,7 +499,7 @@ struct MovieDetailView: View {
             Button {
                 var updated = movie
                 updated.containerExtension = resolvedExtension
-                appState.startPlayback(.fromMovie(updated, resumeSeconds: savedProgress?.positionSeconds ?? 0))
+                appState.startPlayback(.fromMovie(updated, resumeSeconds: savedProgress?.resumePosition ?? 0))
             } label: {
                 Circle()
                     .fill(Color.black.opacity(0.65))

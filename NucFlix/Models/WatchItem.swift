@@ -133,6 +133,15 @@ struct WatchHistoryEntry: Codable, Identifiable, Hashable {
         return min(max(positionSeconds / durationSeconds, 0), 1)
     }
 
+    /// Finished: 92% through or into the last 90 s (people stop during the credits). Live never finishes.
+    var isWatched: Bool {
+        guard contentType != .live, durationSeconds > 60 else { return false }
+        return progressFraction >= 0.92 || durationSeconds - positionSeconds <= 90
+    }
+
+    /// Where to start playing: the saved position, or the beginning once it's been watched.
+    var resumePosition: Double { isWatched ? 0 : positionSeconds }
+
     func toPlaybackItem() -> PlaybackItem {
         PlaybackItem(
             id: id,

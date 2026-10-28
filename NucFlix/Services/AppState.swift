@@ -1125,7 +1125,7 @@ final class AppState {
         if item.resumeSeconds <= 0,
            item.contentType != .live,
            let existing = watchHistory.first(where: { $0.id == item.id }),
-           existing.progressFraction < 0.95 {
+           !existing.isWatched {
             mutableItem.resumeSeconds = existing.positionSeconds
         }
         activePlayback = mutableItem
@@ -1226,7 +1226,7 @@ final class AppState {
         var mutableItem = item
         if item.resumeSeconds <= 0,
            let existing = watchHistory.first(where: { $0.id == item.id }),
-           existing.progressFraction < 0.95 {
+           !existing.isWatched {
             mutableItem.resumeSeconds = existing.positionSeconds
         }
         recordPlaybackProgress(item: mutableItem, positionSeconds: mutableItem.resumeSeconds, durationSeconds: 0)
@@ -1453,6 +1453,50 @@ final class AppState {
     /// Watch history with NSFW items removed when the filter is on
     var visibleWatchHistory: [WatchHistoryEntry] {
         showAdultContent ? watchHistory : watchHistory.filter { !isAdultContent($0) }
+    }
+
+    /// Next episode for series whose latest watched episode is finished, keyed by series ID.
+    /// Filled by `refreshUpNext()`; the lookup needs the series' episode list from the provider.
+    var upNextBySeries: [Int: WatchHistoryEntry] = [:]
+
+    /// Netflix-style row: one card per series (its latest episode, or the next one once that's finished),
+    /// finished movies dropped, newest first.
+    var continueWatchingEntries: [WatchHistoryEntry] {
+        var seenSeries = Set<Int>()
+        var rows: [WatchHistoryEntry] = []
+        for entry in visibleWatchHistory {
+            if entry.contentType == .seriesEpisode, let seriesID = entry.seriesID {
+                guard seenSeries.insert(seriesID).inserted else { continue }
+                if !entry.isWatched {
+                    rows.append(entry)
+                } else if let next = upNextBySeries[seriesID],
+                          !(watchHistory.first { $0.id == next.id }?.isWatched ?? false) {
+                    rows.append(next)
+                }
+            } else if !entry.isWatched {
+                rows.append(entry)
+            }
+        }
+        return rows
+    }
+
+    /// Resolves the episode after each finished one at the top of a series' history.
+    func refreshUpNext() async {
+        var seenSeries = Set<Int>()
+        for entry in visibleWatchHistory {
+            guard entry.contentType == .seriesEpisode, let seriesID = entry.seriesID,
+                  seenSeries.insert(seriesID).inserted, entry.isWatched,
+                  upNextBySeries[seriesID]?.lastWatchedAt != entry.lastWatchedAt else { continue }
+            guard let next = await nextEpisode(after: entry.toPlaybackItem()) else {
+                upNextBySeries.removeValue(forKey: seriesID)
+                continue
+            }
+            upNextBySeries[seriesID] = WatchHistoryEntry(
+                id: next.id, contentType: .seriesEpisode, title: next.title, subtitle: next.subtitle,
+                artworkURL: next.artworkURL ?? entry.artworkURL, streamID: nil, episodeID: next.episodeID,
+                seriesID: seriesID, containerExtension: next.containerExtension,
+                positionSeconds: 0, durationSeconds: 0, lastWatchedAt: entry.lastWatchedAt)
+        }
     }
 
     var visibleFavoriteMovies: [XtreamVODStream] {

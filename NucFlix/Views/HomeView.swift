@@ -94,7 +94,7 @@ struct HomeView: View {
                         }
 
                         // Continue Watching sits high, like Netflix
-                        if !appState.visibleWatchHistory.isEmpty {
+                        if !appState.continueWatchingEntries.isEmpty {
                             continueWatchingNetflixRow
                         }
 
@@ -151,6 +151,10 @@ struct HomeView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            // Finished episodes hand their Continue Watching spot to the next episode.
+            .task(id: appState.watchHistory.first.map { "\($0.id)|\($0.positionSeconds)" } ?? "") {
+                await appState.refreshUpNext()
+            }
             .sheet(isPresented: $showDownloadsSheet) {
                 DownloadsView()
                     .environment(appState)
@@ -684,6 +688,12 @@ struct HomeView: View {
 
     // MARK: - "Continue Watching" Row
 
+    /// "S8 E15 • Title" -> "S8 E15"
+    static func episodeTag(_ subtitle: String?) -> String {
+        guard let subtitle, !subtitle.isEmpty else { return "Next episode" }
+        return subtitle.components(separatedBy: " • ").first ?? subtitle
+    }
+
     private var continueWatchingNetflixRow: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -701,7 +711,7 @@ struct HomeView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
-                    ForEach(appState.visibleWatchHistory.prefix(20)) { entry in
+                    ForEach(appState.continueWatchingEntries.prefix(20)) { entry in
                         Button {
                             appState.startPlayback(entry.toPlaybackItem())
                         } label: {
@@ -737,13 +747,15 @@ struct HomeView: View {
                                             .fill(Color(white: 0.28))
                                         Rectangle()
                                             .fill(AppTheme.netflixRed)
-                                            .frame(width: geo.size.width * max(entry.progressFraction, 0.2))
+                                            .frame(width: geo.size.width * (entry.positionSeconds > 0 ? max(entry.progressFraction, 0.2) : 0))
                                     }
                                 }
                                 .frame(width: 132, height: 3)
 
                                 HStack {
-                                    Text(XtreamTextFormatter.format(entry.title).cleanTitle)
+                                    Text(entry.contentType == .seriesEpisode
+                                         ? (entry.positionSeconds > 0 ? Self.episodeTag(entry.subtitle) : "Up next • \(Self.episodeTag(entry.subtitle))")
+                                         : XtreamTextFormatter.format(entry.title).cleanTitle)
                                         .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(.white.opacity(0.85))
                                         .lineLimit(1)

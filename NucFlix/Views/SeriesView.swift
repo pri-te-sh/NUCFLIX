@@ -221,6 +221,31 @@ struct SeriesDetailView: View {
     @State private var isLoading: Bool = true
     @State private var isRated: Bool = false
 
+    /// What the big Play button should do: resume the episode you're in the middle of, or play the one
+    /// after the last episode you finished. Nil when nothing of this series has been watched yet.
+    private var continueTarget: (episode: XtreamEpisode, season: Int, resume: Double, label: String)? {
+        guard let last = appState.watchHistory.first(where: { $0.seriesID == series.seriesId.value && $0.contentType == .seriesEpisode }),
+              let lastID = last.episodeID else { return nil }
+        let seasons = seriesInfo.sortedSeasonNumbers
+        for (seasonIndex, season) in seasons.enumerated() {
+            guard let episodes = seriesInfo.episodesBySeason[season],
+                  let idx = episodes.firstIndex(where: { $0.episodeId.value == lastID }) else { continue }
+            if !last.isWatched {
+                let ep = episodes[idx]
+                return (ep, season, last.positionSeconds, "Resume S\(season) E\(ep.episodeNum.value)")
+            }
+            if idx + 1 < episodes.count {
+                let ep = episodes[idx + 1]
+                return (ep, season, 0, "Play S\(season) E\(ep.episodeNum.value)")
+            }
+            if seasonIndex + 1 < seasons.count, let ep = seriesInfo.episodesBySeason[seasons[seasonIndex + 1]]?.first {
+                return (ep, seasons[seasonIndex + 1], 0, "Play S\(seasons[seasonIndex + 1]) E\(ep.episodeNum.value)")
+            }
+            return nil
+        }
+        return nil
+    }
+
     private var currentEpisodes: [XtreamEpisode] {
         seriesInfo.episodesBySeason[selectedSeason] ?? []
     }
@@ -270,15 +295,21 @@ struct SeriesDetailView: View {
                         // Authentic Netflix Full-Width Capsule "Play" & "Download" Buttons
                         if let firstEp = currentEpisodes.first {
                             VStack(spacing: 10) {
+                                let target = continueTarget
                                 Button {
-                                    appState.startPlayback(
-                                        .fromEpisode(series: series, episode: firstEp, seasonNumber: selectedSeason)
-                                    )
+                                    if let target {
+                                        appState.startPlayback(.fromEpisode(series: series, episode: target.episode,
+                                                                            seasonNumber: target.season, resumeSeconds: target.resume))
+                                    } else {
+                                        appState.startPlayback(
+                                            .fromEpisode(series: series, episode: firstEp, seasonNumber: selectedSeason)
+                                        )
+                                    }
                                 } label: {
                                     HStack(spacing: 8) {
                                         Image(systemName: "play.fill")
                                             .font(.system(size: 17, weight: .bold))
-                                        Text("Play")
+                                        Text(target?.label ?? "Play")
                                             .font(.system(size: 16, weight: .bold))
                                     }
                                     .frame(maxWidth: .infinity)
@@ -521,7 +552,7 @@ struct SeriesDetailView: View {
                             series: series,
                             episode: ep,
                             seasonNumber: selectedSeason,
-                            resumeSeconds: saved?.positionSeconds ?? 0
+                            resumeSeconds: saved?.resumePosition ?? 0
                         )
                     )
                 } label: {
@@ -558,6 +589,11 @@ struct SeriesDetailView: View {
 
                     let itemID = "episode-\(ep.episodeId.value)"
                     HStack(spacing: 6) {
+                        if saved?.isWatched == true {
+                            Label("Watched", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
                         if let dur = ep.info?.duration, !dur.isEmpty {
                             Text(dur)
                                 .font(.system(size: 12))
@@ -591,8 +627,8 @@ struct SeriesDetailView: View {
                 ProgressView(value: max(active.progress, 0.03))
                     .tint(AppTheme.netflixRed)
             } else if let saved, saved.progressFraction > 0 {
-                ProgressView(value: saved.progressFraction)
-                    .tint(AppTheme.netflixRed)
+                ProgressView(value: saved.isWatched ? 1 : saved.progressFraction)
+                    .tint(saved.isWatched ? .white.opacity(0.35) : AppTheme.netflixRed)
             }
         }
     }
