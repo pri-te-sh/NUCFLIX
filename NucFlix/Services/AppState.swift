@@ -597,6 +597,7 @@ final class AppState {
             let (authResponse, workingCredentials) = try await api.authenticateResolvingScheme(credentials: creds)
             self.credentials = workingCredentials
             DownloadManager.shared.lineCredentials = workingCredentials
+            DownloadManager.shared.lineMaxConnections = authResponse.userInfo?.maxConnections.flatMap { Int($0.value) }
             self.userInfo = authResponse.userInfo
             self.serverInfo = authResponse.serverInfo
 
@@ -619,6 +620,7 @@ final class AppState {
     func signOut() {
         credentials = nil
         DownloadManager.shared.lineCredentials = nil
+        DownloadManager.shared.lineMaxConnections = nil
         userInfo = nil
         serverInfo = nil
         liveCategories = []

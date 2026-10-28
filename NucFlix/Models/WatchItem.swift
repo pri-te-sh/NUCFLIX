@@ -215,6 +215,8 @@ struct ActiveDownloadItem: Identifiable, Equatable, Codable {
     var bytesWritten: Int64
     var totalBytes: Int64
     var retryCount: Int = 0
+    /// Why the item is waiting or why it failed ("Waiting for a free connection…"); shown instead of progress.
+    var statusNote: String?
 
     var cleanTitle: String {
         XtreamTextFormatter.format(title).cleanTitle
@@ -244,6 +246,7 @@ struct ActiveDownloadItem: Identifiable, Equatable, Codable {
     }
 
     var progressDetailText: String {
+        if let statusNote { return statusNote }
         let written = ByteCountFormatter.string(fromByteCount: bytesWritten, countStyle: .file)
         if totalBytes > 0 {
             let total = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
@@ -271,6 +274,8 @@ private struct PersistedDownloadState: Codable {
     var version: Int = 1
     var active: [ActiveDownloadItem]
     var queued: [ActiveDownloadItem]
+    var failed: [ActiveDownloadItem]?
+    /// Written by older builds (a single slot); folded into `failed` on load.
     var lastFailed: ActiveDownloadItem?
 }
 
@@ -304,6 +309,17 @@ private struct LinkedDownloadTask {
     let startedFromResumeData: Bool
 
     var key: DownloadTaskKey { DownloadTaskKey(kind: kind, task: task) }
+}
+
+/// Keeps the screen from auto-locking while any reason holds (watching, downloading). Main thread only.
+enum ScreenAwake {
+    enum Reason { case playback, downloads }
+    private static var reasons: Set<Reason> = []
+
+    static func set(_ reason: Reason, _ on: Bool) {
+        if on { reasons.insert(reason) } else { reasons.remove(reason) }
+        UIApplication.shared.isIdleTimerDisabled = !reasons.isEmpty
+    }
 }
 
 /// Hybrid download engine:
@@ -340,12 +356,47 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         didSet { if lineCredentials != nil { advanceQueueIfNeeded() } }
     }
     var lastDownloadError: String?
-    private(set) var lastFailedItem: ActiveDownloadItem?
+    /// Downloads that gave up after their retries. Kept (and persisted) until the user retries or removes
+    /// them, so a failure never just makes an item vanish from the list.
+    private(set) var failedDownloads: [ActiveDownloadItem] = []
+    /// The line's `max_connections` from the provider. Every download is one connection, so running more
+    /// than the line allows only gets refused (HTTP 509/884) or kicks another stream off.
+    var lineMaxConnections: Int? {
+        didSet {
+            guard lineMaxConnections != oldValue else { return }
+            enforceConcurrencyLimit()
+            advanceQueueIfNeeded()
+        }
+    }
+    private var concurrencyLimit: Int {
+        min(maxConcurrentDownloads, max(1, lineMaxConnections ?? Self.maxConcurrentDownloadsLimit))
+    }
+    /// Provider answers that mean "this line has no free connection right now" (or rate limiting).
+    private static let busyStatusCodes: Set<Int> = [429, 458, 503, 509, 884]
+    private static let busyRetryLimit = 8
+    /// Delays before retrying a transfer whose connection dropped.
+    private static let networkRetryDelays: [TimeInterval] = [2, 5, 15, 30, 60]
     var preferredQualityPreset: DownloadQualityPreset = .original {
         didSet {
             UserDefaults.standard.set(preferredQualityPreset.rawValue, forKey: "xtream.downloadQualityPreset.v1")
         }
     }
+    /// Downloads run fastest in-process; once the iPhone auto-locks they move to the slower system
+    /// background session (and, on a 1-connection line, every move costs a reconnect).
+    var keepAwakeWhileDownloading: Bool = UserDefaults.standard.object(forKey: "nucflix.keepAwakeWhileDownloading") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(keepAwakeWhileDownloading, forKey: "nucflix.keepAwakeWhileDownloading")
+            updateScreenAwake()
+        }
+    }
+
+    var hasPendingDownloads: Bool { !activeDownloads.isEmpty || !queuedDownloads.isEmpty }
+
+    private func updateScreenAwake() {
+        guard Thread.isMainThread else { return }
+        ScreenAwake.set(.downloads, keepAwakeWhileDownloading && hasPendingDownloads)
+    }
+
     var maxConcurrentDownloads: Int = 1 {
         didSet {
             UserDefaults.standard.set(maxConcurrentDownloads, forKey: "xtream.maxConcurrentDownloads.v1")
@@ -548,7 +599,8 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         }
         activeDownloads = restoredActive
         queuedDownloads = restoredQueue
-        lastFailedItem = state.lastFailed
+        failedDownloads = (state.failed ?? []) + (state.lastFailed.map { [$0] } ?? [])
+        failedDownloads.removeAll { isDownloaded($0.id) || restoredActive[$0.id] != nil || seen.contains($0.id) }
     }
 
     private func reattachToSystemTasks() {
@@ -608,7 +660,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             .sorted { $0.progress > $1.progress }
         var requeued: [ActiveDownloadItem] = []
         for item in missing {
-            if downloadTasks.count < maxConcurrentDownloads {
+            if downloadTasks.count < concurrencyLimit {
                 beginDownload(active: item, clearsFailure: false)
             } else {
                 activeDownloads.removeValue(forKey: item.id)
@@ -641,13 +693,14 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
 
     /// Writes immediately (enqueue / start / finish / cancel / failure).
     private func persistStateNow() {
+        updateScreenAwake()
         pendingThrottledPersist?.cancel()
         pendingThrottledPersist = nil
         lastStatePersistTime = ProcessInfo.processInfo.systemUptime
         let state = PersistedDownloadState(
             active: activeDownloads.values.map(\.redacted),
             queued: queuedDownloads.map(\.redacted),
-            lastFailed: lastFailedItem?.redacted
+            failed: failedDownloads.map(\.redacted)
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         ioQueue.async {
@@ -841,9 +894,14 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         guard hasReattachedTasks else { return }
 
         let backgroundItems = downloadTasks.filter { $0.value.kind == .background }
+        // Moving a transfer means closing its connection and opening a new one. A line that allows a single
+        // connection usually refuses the new one (HTTP 509) until the provider notices the old one closed,
+        // so a transfer that is already receiving data stays in the background session.
+        let singleConnectionLine = (lineMaxConnections ?? Self.maxConcurrentDownloadsLimit) <= 1
         for (itemID, linked) in backgroundItems {
             let task = linked.task
             guard task.state == .running || task.state == .suspended else { continue }
+            if singleConnectionLine && task.response != nil { continue }
             if task.response == nil && !linked.startedFromResumeData {
                 moveTaskBetweenSessions(itemID: itemID, linked: linked, useResumeData: false)
             } else if Self.canProduceResumeData(task) {
@@ -1261,11 +1319,12 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     }
 
     private func enqueueOrStartDownload(_ item: ActiveDownloadItem) {
+        failedDownloads.removeAll { $0.id == item.id }
         guard activeDownloads[item.id] == nil,
               !isQueued(item.id),
               !isDownloaded(item.id) else { return }
 
-        if hasReattachedTasks && activeDownloads.count < maxConcurrentDownloads {
+        if hasReattachedTasks && activeDownloads.count < concurrencyLimit {
             beginDownload(active: item)
         } else {
             // Before relaunch re-attachment finishes, park new requests in the queue; the scheduler
@@ -1277,7 +1336,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
 
     private func advanceQueueIfNeeded() {
         guard hasReattachedTasks, lineCredentials != nil else { return }
-        while activeDownloads.count < maxConcurrentDownloads, !queuedDownloads.isEmpty {
+        while activeDownloads.count < concurrencyLimit, !queuedDownloads.isEmpty {
             let next = queuedDownloads.removeFirst()
             if !isDownloaded(next.id) && activeDownloads[next.id] == nil {
                 beginDownload(active: next)
@@ -1289,7 +1348,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     /// least-progressed extras (keeping resume data) and put them back at the front of the queue.
     private func enforceConcurrencyLimit() {
         guard hasReattachedTasks else { return }
-        let overflow = activeDownloads.count - maxConcurrentDownloads
+        let overflow = activeDownloads.count - concurrencyLimit
         guard overflow > 0 else { return }
         let toPause = activeDownloads.values
             .sorted { $0.progress < $1.progress }
@@ -1331,14 +1390,37 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         persistStateNow()
     }
 
-    func retryLastFailedDownload() {
-        guard var failed = lastFailedItem else { return }
-        failed.retryCount = 0
+    /// Puts every failed download back in the queue (resume data persisted when they failed is reused).
+    func retryFailedDownloads() {
+        let failed = failedDownloads
         lastDownloadError = nil
-        lastFailedItem = nil
-        // Any resume data persisted when it failed (even across relaunches) is picked up by beginDownload.
-        enqueueOrStartDownload(failed)
+        for item in failed { retryFailedDownload(id: item.id) }
+    }
+
+    func retryFailedDownload(id: String) {
+        guard let idx = failedDownloads.firstIndex(where: { $0.id == id }) else { return }
+        var item = failedDownloads.remove(at: idx)
+        item.retryCount = 0
+        item.statusNote = nil
+        if failedDownloads.isEmpty { lastDownloadError = nil }
+        enqueueOrStartDownload(item)
         persistStateNow()
+    }
+
+    func removeFailedDownload(id: String) {
+        failedDownloads.removeAll { $0.id == id }
+        if failedDownloads.isEmpty { lastDownloadError = nil }
+        deletePersistedResumeData(for: id)
+        persistStateNow()
+    }
+
+    private func recordFailure(_ item: ActiveDownloadItem, reason: String) {
+        var failed = item
+        failed.statusNote = reason
+        failedDownloads.removeAll { $0.id == item.id }
+        failedDownloads.insert(failed, at: 0)
+        lastDownloadError = reason
+        NotificationManager.shared.recordDownloadFailed(item: item, reason: reason)
     }
 
     /// Starts a transfer on the in-process session while the app is in the foreground, or on the
@@ -1349,14 +1431,15 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             activeDownloads[active.id] = active
             return
         }
+        failedDownloads.removeAll { $0.id == active.id }
         if clearsFailure {
-            lastDownloadError = nil
-            lastFailedItem = nil
+            lastDownloadError = failedDownloads.first?.statusNote
         }
 
         let kind = preferredSessionKind
         let targetSession = session(for: kind)
         var item = active
+        item.statusNote = nil
         let task: URLSessionDownloadTask
         let resumeData = explicitResumeData ?? consumePersistedResumeData(for: active.id)
         if let resumeData {
@@ -1426,6 +1509,8 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         }
         downloadTasks.removeAll()
         deleteAllPersistedResumeData()
+        failedDownloads.removeAll()
+        lastDownloadError = nil
         for item in downloadedItems {
             try? FileManager.default.removeItem(at: item.localFileURL)
         }
@@ -1596,6 +1681,16 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         let safeFileName = "\(active.id).\(active.containerExtension)"
         let destinationURL = Self.downloadsDirectory.appendingPathComponent(safeFileName)
 
+        // A line with no free connection answers 509/884 (or a near-empty body). That isn't a broken
+        // download: wait and try again instead of failing it.
+        let stagedSize = stagedURL.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.size] as? Int64 } ?? 0
+        let lineBusy = statusCode.map(Self.busyStatusCodes.contains) ?? false
+            || (stagedURL != nil && stagedSize < 4096 && (statusCode.map { (200..<300).contains($0) } ?? true))
+        if lineBusy {
+            if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) }
+            if waitForFreeConnection(active, task: task, kind: kind) { return }
+        }
+
         // Reject HTTP error responses and text/* bodies (HTML/JSON error pages) instead of saving them as video.
         var rejectionReason: String?
         if let statusCode, !(200..<300).contains(statusCode) {
@@ -1609,11 +1704,11 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             }
         }
 
-        if let rejectionReason {
+        if lineBusy {
+            recordFailure(active, reason: "Your IPTV line stayed busy, so \(active.cleanTitle) couldn’t download. Close other players using the line, then retry.")
+        } else if let rejectionReason {
             if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) }
-            lastDownloadError = rejectionReason
-            lastFailedItem = active
-            NotificationManager.shared.recordDownloadFailed(item: active, reason: rejectionReason)
+            recordFailure(active, reason: rejectionReason)
         } else if let stagedURL {
             do {
                 if FileManager.default.fileExists(atPath: destinationURL.path) {
@@ -1626,10 +1721,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
 
                 if rawFileSize < 4096 {
                     try? FileManager.default.removeItem(at: destinationURL)
-                    let errMsg = "Server returned an empty or busy stream for \(active.cleanTitle) (check if another stream is open)."
-                    lastDownloadError = errMsg
-                    lastFailedItem = active
-                    NotificationManager.shared.recordDownloadFailed(item: active, reason: errMsg)
+                    recordFailure(active, reason: "Server returned an empty stream for \(active.cleanTitle).")
                 } else {
                     let scale = min(max(active.sizeScaleFactor, 0.1), 1.0)
                     let effectiveSize = max(Int64(Double(rawFileSize) * scale), 4096)
@@ -1662,16 +1754,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                 }
             } catch {
                 try? FileManager.default.removeItem(at: stagedURL)
-                let errMsg = "Failed to save offline file: \(error.localizedDescription)"
-                lastDownloadError = errMsg
-                lastFailedItem = active
-                NotificationManager.shared.recordDownloadFailed(item: active, reason: errMsg)
+                recordFailure(active, reason: "Failed to save offline file: \(error.localizedDescription)")
             }
         } else {
-            let errMsg = "Failed to save offline file: \(stagingError?.localizedDescription ?? "unknown error")"
-            lastDownloadError = errMsg
-            lastFailedItem = active
-            NotificationManager.shared.recordDownloadFailed(item: active, reason: errMsg)
+            recordFailure(active, reason: "Failed to save offline file: \(stagingError?.localizedDescription ?? "unknown error")")
         }
 
         // Remove the item before cancelling any replacement transfer so its callback is ignored.
@@ -1786,21 +1872,40 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             return
         }
 
-        if active.retryCount < 3 {
+        // IPTV providers often drop a transfer when the line's connection is taken elsewhere; back off
+        // so the provider has time to release it instead of burning every retry within a few seconds.
+        if active.retryCount < Self.networkRetryDelays.count {
+            let delay = Self.networkRetryDelays[active.retryCount]
             active.retryCount += 1
+            active.statusNote = "Connection dropped • retrying in \(Int(delay)) s"
             activeDownloads[itemID] = active
             persistStateNow()
-            scheduleRestart(itemID: itemID, after: 1.2)
+            scheduleRestart(itemID: itemID, after: delay)
             return
         }
 
         activeDownloads.removeValue(forKey: itemID)
-        lastFailedItem = active
-        let errMsg = "Download interrupted for \(active.cleanTitle): \(error.localizedDescription)"
-        lastDownloadError = errMsg
-        NotificationManager.shared.recordDownloadFailed(item: active, reason: errMsg)
+        recordFailure(active, reason: "Download interrupted for \(active.cleanTitle): \(error.localizedDescription)")
         advanceQueueIfNeeded()
         persistStateNow()
+    }
+
+    /// Keeps a refused item in its slot and retries it later. Returns false once the retries are used up.
+    private func waitForFreeConnection(_ item: ActiveDownloadItem, task: URLSessionDownloadTask, kind: DownloadSessionKind) -> Bool {
+        guard item.retryCount < Self.busyRetryLimit else { return false }
+        var waiting = item
+        waiting.retryCount += 1
+        let delay = min(15 * TimeInterval(waiting.retryCount), 120)
+        waiting.statusNote = "Waiting for a free connection on your IPTV line • retrying in \(Int(delay)) s"
+        activeDownloads[item.id] = waiting
+        if let linked = downloadTasks[item.id], linked.key == DownloadTaskKey(kind: kind, task: task) {
+            downloadTasks.removeValue(forKey: item.id)
+        }
+        releaseKeepAlive(for: item.id)
+        deletePersistedResumeData(for: item.id) // the refused body isn't part of the video
+        persistStateNow()
+        scheduleRestart(itemID: item.id, after: delay)
+        return true
     }
 
     private func scheduleRestart(itemID: String, after delay: TimeInterval) {

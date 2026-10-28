@@ -230,7 +230,7 @@ struct IPTVPlayerView: View {
             stallRetryCount = 0
             lastSavedProgressSecond = item.resumeSeconds
             originalBrightness = UIScreen.main.brightness
-            UIApplication.shared.isIdleTimerDisabled = true
+            ScreenAwake.set(.playback, true)
             selectedFormat = appState.preferredLiveFormat
             brightnessLevel = max(UIScreen.main.brightness, 0.45)
             configureAudioSession(triggerReloadIfNeeded: false)
@@ -258,7 +258,7 @@ struct IPTVPlayerView: View {
             if let originalBrightness {
                 UIScreen.main.brightness = originalBrightness
             }
-            UIApplication.shared.isIdleTimerDisabled = false
+            ScreenAwake.set(.playback, false)
             requestOrientation(.portrait)
         }
         .onReceive(

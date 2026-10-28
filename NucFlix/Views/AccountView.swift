@@ -13,11 +13,13 @@ struct DownloadsView: View {
     @Environment(AppState.self) var appState
     private var downloadManager = DownloadManager.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var showDownloadMode = false
 
     private var hasAnyDownloadsOrTransfers: Bool {
         !downloadManager.downloadedItems.isEmpty ||
         !downloadManager.activeDownloads.isEmpty ||
-        !downloadManager.queuedDownloads.isEmpty
+        !downloadManager.queuedDownloads.isEmpty ||
+        !downloadManager.failedDownloads.isEmpty
     }
 
     var body: some View {
@@ -61,6 +63,17 @@ struct DownloadsView: View {
                         if !hasAnyDownloadsOrTransfers {
                             emptyDownloadsState
                         } else {
+                            // 0. Downloads that gave up: stay listed until retried or removed.
+                            if !downloadManager.failedDownloads.isEmpty {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ForEach(downloadManager.failedDownloads) { failed in
+                                        failedDownloadRow(failed)
+                                        Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 16)
+                                    }
+                                }
+                                .padding(.top, 8)
+                            }
+
                             // 1. TV Series (Grouped Under Same Series Poster)
                             let seriesGroups = downloadManager.groupedSeriesDownloads
                             if !seriesGroups.isEmpty {
@@ -117,6 +130,17 @@ struct DownloadsView: View {
             .navigationTitle("Downloads")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if downloadManager.hasPendingDownloads {
+                        Button {
+                            showDownloadMode = true
+                        } label: {
+                            Image(systemName: "moon.fill")
+                        }
+                        .foregroundStyle(.white)
+                        .accessibilityLabel("Download Mode")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         dismiss()
@@ -124,6 +148,9 @@ struct DownloadsView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                 }
+            }
+            .fullScreenCover(isPresented: $showDownloadMode) {
+                DownloadModeView()
             }
             .safeAreaInset(edge: .bottom) {
                 NetflixDeviceStorageBar(
@@ -379,9 +406,9 @@ struct DownloadsView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.9))
             Spacer()
-            if downloadManager.lastFailedItem != nil {
-                Button("Retry") {
-                    downloadManager.retryLastFailedDownload()
+            if downloadManager.failedDownloads.count > 1 {
+                Button("Retry All") {
+                    downloadManager.retryFailedDownloads()
                 }
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white)
@@ -394,6 +421,51 @@ struct DownloadsView: View {
         .padding(14)
         .background(netflixSurfaceGray, in: RoundedRectangle(cornerRadius: 6))
         .padding(.horizontal, 16)
+    }
+
+    private func failedDownloadRow(_ item: ActiveDownloadItem) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(AppTheme.netflixRed)
+                .frame(width: 28)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.cleanTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if let subtitle = item.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1)
+                }
+                Text(item.statusNote ?? "Download didn’t finish.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button("Retry") { downloadManager.retryFailedDownload(id: item.id) }
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(.white, in: Capsule())
+                    Button("Remove") { downloadManager.removeFailedDownload(id: item.id) }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Color(white: 0.25), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     private var emptyDownloadsState: some View {
@@ -1016,6 +1088,33 @@ struct AccountView: View {
 
                                 rowDivider
 
+                                // Keep Awake While Downloading Toggle Row
+                                HStack(spacing: 16) {
+                                    Image(systemName: "sun.max")
+                                        .font(.system(size: 20, weight: .regular))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                        .frame(width: 24)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Keep iPhone Awake")
+                                            .font(.system(size: 16, weight: .regular))
+                                            .foregroundStyle(.white)
+                                        Text("Stops auto-lock while NucFlix is open and downloading, so downloads stay at full speed")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(netflixMutedText)
+                                    }
+
+                                    Spacer()
+
+                                    Toggle("", isOn: Bindable(downloadManager).keepAwakeWhileDownloading)
+                                        .labelsHidden()
+                                        .tint(netflixDownloadBlue)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+
+                                rowDivider
+
                                 // Delete All Downloads Row
                                 Button(role: .destructive) {
                                     downloadManager.clearAllDownloads()
@@ -1565,5 +1664,77 @@ struct NotificationsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Full-screen black "leave it on the nightstand" view: keeps NucFlix in the foreground (fastest downloads)
+/// with the screen dimmed. Tap anywhere to leave; brightness is restored.
+struct DownloadModeView: View {
+    private var downloadManager = DownloadManager.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var originalBrightness: CGFloat?
+
+    private var current: ActiveDownloadItem? {
+        downloadManager.activeDownloads.values.sorted { $0.progress > $1.progress }.first
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 18) {
+                Image(systemName: downloadManager.hasPendingDownloads ? "arrow.down.circle" : "checkmark.circle")
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(.white.opacity(0.55))
+                if let current {
+                    Text(current.cleanTitle)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                    if let subtitle = current.subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .multilineTextAlignment(.center)
+                    }
+                    ProgressView(value: min(max(current.progress, 0), 1))
+                        .tint(.white.opacity(0.5))
+                        .frame(maxWidth: 240)
+                    Text(current.progressDetailText)
+                        .font(.system(size: 13).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                }
+                Text(downloadManager.hasPendingDownloads
+                     ? "\(downloadManager.activeDownloads.count + downloadManager.queuedDownloads.count) left • keep NucFlix open for the fastest downloads"
+                     : "All downloads finished")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .multilineTextAlignment(.center)
+                Text("Tap to exit")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.25))
+                    .padding(.top, 24)
+            }
+            .padding(32)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { dismiss() }
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onAppear {
+            originalBrightness = UIScreen.main.brightness
+            UIScreen.main.brightness = 0.05
+            ScreenAwake.set(.downloads, true)
+        }
+        .onDisappear {
+            if let originalBrightness { UIScreen.main.brightness = originalBrightness }
+            ScreenAwake.set(.downloads, downloadManager.keepAwakeWhileDownloading && downloadManager.hasPendingDownloads)
+        }
+        .onChange(of: downloadManager.hasPendingDownloads) { _, pending in
+            // Queue finished: give the screen its brightness back and let the phone lock normally.
+            guard !pending else { return }
+            if let originalBrightness { UIScreen.main.brightness = originalBrightness }
+            ScreenAwake.set(.downloads, false)
+        }
     }
 }
