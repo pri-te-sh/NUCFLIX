@@ -1594,7 +1594,7 @@ final class AppState {
         func hidden(_ kind: String, _ cats: [XtreamCategory]) -> Set<String> {
             Set(cats.filter { cat in
                 guard let tag = SmartAI.shared.tag(kind, cat.id) else { return false }
-                return tag.adult > 0.5 || (kids && tag.kids < 0.5)
+                return tag.adult > 0.7 || (kids && tag.kids < 0.5)
             }.map(\.id))
         }
         let live = hidden("live", rawLiveCategories)

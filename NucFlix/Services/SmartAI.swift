@@ -300,6 +300,7 @@ final class PlayerAI {
     @ObservationIgnored private var introStart: Double?
     @ObservationIgnored private var introLast: Double?
     @ObservationIgnored private var introFirstCheck: Double?
+    @ObservationIgnored private var introCandidate: Double?
     @ObservationIgnored private var introDone = false
     @ObservationIgnored private var liveDone = false
     @ObservationIgnored private var playingSince: Date?
@@ -338,6 +339,7 @@ final class PlayerAI {
         introStart = nil
         introLast = nil
         introFirstCheck = nil
+        introCandidate = nil
         introDone = false
         liveDone = false
         playingSince = nil
@@ -421,11 +423,19 @@ final class PlayerAI {
 
     private func introFrame(_ r: SmartAI.FrameVerdict, position: Double, duration: Double) {
         if introFirstCheck == nil { introFirstCheck = position }
-        if r.p("intro") >= 0.6 {
-            if introStart == nil { introStart = max(0, position - 5) }
+        if r.p("intro") >= 0.75 {
+            // Two sightings in a row before the titles count as started (one text-heavy frame is not an intro).
+            if introStart == nil {
+                guard let candidate = introCandidate else {
+                    introCandidate = position
+                    return
+                }
+                introStart = max(0, candidate - 5)
+            }
             introLast = position
             return
         }
+        introCandidate = nil
         var fields: [String: Double]?
         if let start = introStart {
             introDone = true // the titles just ended

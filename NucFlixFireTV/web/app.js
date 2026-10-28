@@ -724,7 +724,7 @@
     const kids = isKids();
     const hidden = (kind, x) => {
       const tag = Smart.Tags.get(kind, x.categoryId);
-      if (!showAdult && (ADULT_RE.test(x.categoryName) || (tag && tag.adult > 0.5))) return true;
+      if (!showAdult && (ADULT_RE.test(x.categoryName) || (tag && tag.adult > 0.7))) return true;
       return kids && !!tag && tag.kids < 0.5;
     };
     const blocked = { live: new Set(), movie: new Set(), series: new Set() };
@@ -2643,7 +2643,7 @@
     start(item) {
       this.stop();
       this.item = item;
-      this.intro = { start: null, last: null, first: null, done: false };
+      this.intro = { start: null, last: null, first: null, candidate: null, done: false };
       if (item.kind === 'live') return;
       this.ref = item.kind === 'movie' ? { kind: 'movie', id: item.streamId } : { kind: 'episode', id: item.episode.episodeId };
       Cloud.getMarker(this.ref.kind, this.ref.id).then(m => { if (this.item === item) this.marker = m || {}; });
@@ -2734,11 +2734,16 @@
       const p = r.probabilities || {};
       const intro = this.intro;
       if (intro.first == null) intro.first = pos;
-      if ((p.intro || 0) >= 0.6) {
-        if (intro.start == null) intro.start = Math.max(0, pos - 5);
+      if ((p.intro || 0) >= 0.75) {
+        // Two sightings in a row before the titles count as started (one text-heavy frame is not an intro).
+        if (intro.start == null) {
+          if (intro.candidate == null) { intro.candidate = pos; return; }
+          intro.start = Math.max(0, intro.candidate - 5);
+        }
         intro.last = pos;
         return;
       }
+      intro.candidate = null;
       if (intro.start != null) {
         intro.done = true; // the titles just ended
         const end = Math.min(pos, intro.last + 5);

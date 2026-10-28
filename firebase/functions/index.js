@@ -110,7 +110,8 @@ function checkImage(b64) {
 
 // ------------------------------------------------------------------ frameCheck
 
-const SCENE = 'Normal scene from the programme: people, action, dialogue, scenery or sport';
+const SCENE = 'Normal scene from the programme: people, action, dialogue, scenery or sport, including any on-screen '
+  + 'captions, subtitles, news tickers or name graphics';
 const FRAME_TASKS = {
   // Near the end of an episode/film: have the end credits started?
   credits: {
@@ -127,7 +128,8 @@ const FRAME_TASKS = {
     state: 'A frame captured in the first minutes of a TV episode, to find where the opening title sequence is.',
     criteria: {
       programme: SCENE,
-      intro: 'Opening title sequence: the show\'s title card, a stylised opening montage, or opening credits over theme visuals',
+      intro: 'The show\'s own opening title sequence: its stylised title or logo card, or an opening montage with cast '
+        + 'credits over theme visuals. Not a news ticker, captions, or a scene with text on it',
       recap: 'A "previously on" recap of earlier episodes',
       logo_or_black: 'A studio or channel logo, a black frame, or a fade between scenes'
     }
@@ -141,16 +143,31 @@ const FRAME_TASKS = {
       frozen: 'The picture is stuck: the two frames are pixel-for-pixel the same mid-programme',
       offline: 'An error card, "channel unavailable", "no signal", a colour-bar test pattern or a placeholder logo screen'
     }
+  },
+  // Live channel whose two frames came out byte-identical: stuck, or a screen that is meant to be still?
+  liveStill: {
+    state: 'Two frames from a live TV channel, captured about 3 seconds apart, came out exactly identical: the picture '
+      + 'has not changed at all. Decide whether the channel is stuck.',
+    criteria: {
+      ok: 'A screen meant to be still: a radio or music station graphic, an information slide, a menu or programme guide',
+      black: 'A black or blank screen',
+      frozen: 'A programme stopped mid-motion: people, sport, presenters, scenery or action frozen in place',
+      offline: 'An error card, "channel unavailable", "no signal", a colour-bar test pattern or a placeholder logo screen'
+    }
   }
 };
 
 export const frameCheck = onCall(options, async request => {
   const owner = await household(request);
-  const task = FRAME_TASKS[request.data?.task];
-  const images = request.data?.images;
+  let task = request.data?.task === 'liveStill' ? null : FRAME_TASKS[request.data?.task];
+  let images = request.data?.images;
   if (!task) throw new HttpsError('invalid-argument', 'Unknown task.');
   if (!Array.isArray(images) || images.length < 1 || images.length > 2 || !images.every(checkImage)) {
     throw new HttpsError('invalid-argument', 'Send one or two JPEG/PNG frames.');
+  }
+  if (task === FRAME_TASKS.live && images.length === 2 && images[0] === images[1]) {
+    task = FRAME_TASKS.liveStill; // nothing moved: one frame and a sharper question
+    images = [images[0]];
   }
   const title = str(request.data?.title, 200) ? ` Title: ${request.data.title}.` : '';
   await spend(owner, 1);
@@ -193,8 +210,11 @@ export const classifyCategories = onCall(options, async request => {
     };
     questions[`adult_${i}`] = {
       type: 'noul',
-      instructions: `Is ${which} adult (18+) or sexually explicit content?`,
-      criteria: { false: 'Not adult content', true: 'Adult, XXX or 18+ content' }
+      instructions: `Is ${which} pornographic or sexually explicit (XXX / 18+) content?`,
+      criteria: {
+        false: 'Not sexually explicit. Mature comedy or animation for grown-ups (e.g. "Adult Swim"), drama, horror and violence are not this',
+        true: 'Pornographic, XXX or 18+ sexually explicit content'
+      }
     };
     questions[`lang_${i}`] = { type: 'choice', instructions: `Which language is ${which} in?`, criteria: LANGUAGES };
     questions[`genre_${i}`] = { type: 'choice', instructions: `Which genre best describes ${which}?`, criteria: GENRES };
