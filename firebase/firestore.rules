@@ -9,6 +9,9 @@ rules_version = '2';
 //     favorites/{contentKey}           My List / favourite channels
 //   members/{deviceUid}                paired TVs (anonymous Firebase users) allowed into this household
 //   devices/{deviceUid}                presence + "now playing" per device
+//   markers/{contentKey}               where credits start / the intro ends, found once and shared by every device
+//   lineTags/{lineId}                  AI category tags (kids-safe, adult, language, genre); written by Cloud Functions
+// aiUsage/{uid}                        daily AI call counters (Cloud Functions only)
 // pairing/{code}                       short-lived TV pairing codes (TV creates, phone approves)
 
 service cloud.firestore {
@@ -113,6 +116,19 @@ service cloud.firestore {
         allow delete: if isOwner(uid) || (signedIn() && request.auth.uid == deviceUid);
       }
 
+      // Credits / intro times detected while watching. Same title, same markers for everyone in the household.
+      match /markers/{contentKey} {
+        allow read: if canAccess(uid);
+        allow create, update: if canAccess(uid) && validMarker(contentKey, request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+
+      // AI category tags per line; only the classifyCategories function (Admin SDK) writes them.
+      match /lineTags/{lineId} {
+        allow read: if canAccess(uid);
+        allow write: if false;
+      }
+
       // Presence / now playing. Paired TVs write only their own document; the owner's phones any.
       match /devices/{deviceUid} {
         allow read: if canAccess(uid);
@@ -201,6 +217,17 @@ service cloud.firestore {
         && optStr(d, 'ext', 10)
         && optStr(d, 'categoryId', 40)
         && d.addedAt == request.time;
+    }
+
+    function validMarker(key, d) {
+      return key.size() <= 120
+        && d.keys().hasOnly(['lineId', 'kind', 'creditsAt', 'introStart', 'introEnd', 'duration', 'source', 'updatedAt'])
+        && nonEmpty(d.lineId, 60)
+        && d.kind in ['movie', 'episode']
+        && d.duration is number && d.duration > 0
+        && optNum(d, 'creditsAt') && optNum(d, 'introStart') && optNum(d, 'introEnd')
+        && d.source in ['ai', 'timeline']
+        && stampedNow(d);
     }
 
     function validDevice(d) {

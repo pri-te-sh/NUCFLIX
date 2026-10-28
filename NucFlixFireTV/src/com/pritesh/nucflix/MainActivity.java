@@ -711,6 +711,32 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }, player);
     }
 
+    /**
+     * Copies the frame on screen into a JPEG for the AI checks (credits, intro, dead channel) and hands it to
+     * App.onFrame(id, base64, black). Black frames are sent too: "black screen" is one of the answers.
+     */
+    private void captureFrame(int id, int width) {
+        if (videoSurface == null || !videoSurface.getHolder().getSurface().isValid() || exo == null) {
+            evalJs("window.App && App.onFrame && App.onFrame(" + id + ",'',false)");
+            return;
+        }
+        int w = Math.max(160, Math.min(width, 768));
+        int h = videoW > 0 && videoH > 0 ? Math.max(1, Math.round(w * videoH / (float) videoW)) : Math.round(w * 9 / 16f);
+        Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        PixelCopy.request(videoSurface, bmp, result -> {
+            String b64 = "";
+            boolean black = false;
+            if (result == PixelCopy.SUCCESS) {
+                black = isBlack(bmp);
+                ByteArrayOutputStream out = new ByteArrayOutputStream(48 * 1024);
+                bmp.compress(Bitmap.CompressFormat.JPEG, 72, out);
+                b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+            }
+            bmp.recycle();
+            evalJs("window.App && App.onFrame && App.onFrame(" + id + "," + JSONObject.quote(b64) + "," + black + ")");
+        }, player);
+    }
+
     /** True when a sparse pixel sample is all (near) black, i.e. nothing was copied. */
     private static boolean isBlack(Bitmap b) {
         for (int y = b.getHeight() / 8; y < b.getHeight(); y += Math.max(1, b.getHeight() / 8)) {
@@ -911,6 +937,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 exo.pause();
                 exo.setSeekParameters(SeekParameters.CLOSEST_SYNC);
             });
+        }
+
+        @JavascriptInterface
+        public void captureFrame(int id, int width) {
+            player.post(() -> MainActivity.this.captureFrame(id, width));
         }
 
         @JavascriptInterface

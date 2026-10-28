@@ -719,20 +719,27 @@
     const showAdult = S.prefs.showAdult;
     const cat = emptyCatalog();
     cat.version = S.cat.version + 1;
-    const filterCats = list => showAdult ? list : list.filter(x => !ADULT_RE.test(x.categoryName));
-    cat.liveCats = filterCats(r.liveCats);
-    cat.vodCats = filterCats(r.vodCats);
-    cat.seriesCats = filterCats(r.seriesCats);
-    const blocked = new Set();
-    if (!showAdult) {
-      [r.liveCats, r.vodCats, r.seriesCats].forEach(list => list.forEach(x => {
-        if (ADULT_RE.test(x.categoryName)) blocked.add(x.categoryId);
-      }));
-    }
-    const ok = x => showAdult || (!x.isAdult && !blocked.has(x.categoryId));
-    cat.live = r.live.filter(x => !x.isSectionDivider && ok(x));
-    cat.movies = r.movies.filter(ok);
-    cat.series = r.series.filter(ok);
+    // Adult categories: by name, plus the AI tags (Smart.Tags). Kids profiles also drop every category the
+    // AI judged unsuitable for young children.
+    const kids = isKids();
+    const hidden = (kind, x) => {
+      const tag = Smart.Tags.get(kind, x.categoryId);
+      if (!showAdult && (ADULT_RE.test(x.categoryName) || (tag && tag.adult > 0.5))) return true;
+      return kids && !!tag && tag.kids < 0.5;
+    };
+    const blocked = { live: new Set(), movie: new Set(), series: new Set() };
+    const filterCats = (kind, list) => list.filter(x => {
+      if (!hidden(kind, x)) return true;
+      blocked[kind].add(x.categoryId);
+      return false;
+    });
+    cat.liveCats = filterCats('live', r.liveCats);
+    cat.vodCats = filterCats('movie', r.vodCats);
+    cat.seriesCats = filterCats('series', r.seriesCats);
+    const ok = kind => x => (showAdult && !kids) || (!(x.isAdult && !showAdult) && !blocked[kind].has(x.categoryId));
+    cat.live = r.live.filter(x => !x.isSectionDivider && ok('live')(x));
+    cat.movies = r.movies.filter(ok('movie'));
+    cat.series = r.series.filter(ok('series'));
     cat.live.forEach(x => cat.liveById.set(x.streamId, x));
     cat.movies.forEach(x => cat.movieById.set(x.streamId, x));
     cat.series.forEach(x => cat.seriesById.set(x.seriesId, x));
@@ -1573,6 +1580,20 @@
       refreshInBackground(Date.now());
     }
     prerenderTabs();
+    startTags(line);
+  }
+
+  /** AI category tags (kids-safe, adult, language, genre) for the line; re-filters the catalog as they arrive. */
+  let tagsTimer = null;
+  function startTags(line) {
+    if (!S.raw) return;
+    Smart.Tags.start(line.id, S.raw, () => {
+      clearTimeout(tagsTimer);
+      tagsTimer = setTimeout(() => {
+        if (!S.raw || !S.cloud.line || S.cloud.line.id !== line.id) return;
+        if (isKids() || !S.prefs.showAdult) { applyCatalogFilter(); refreshVisible(); }
+      }, 4000);
+    });
   }
 
   function chooseLine() {
@@ -2411,8 +2432,22 @@
         vod = res.filter(r => r.kind !== 'live').slice(0, 60).map(r => ({ kind: r.kind, data: r.data }));
         heading = (live.length + vod.length) ? 'Top Results' : `No results for “${q}”`;
       }
+      // Requests like "funny hindi movies from the 2010s" also get AI-built filters (Gemma 4), shown first.
+      const smart = q && this.smart && this.smart.q === q ? this.smart : null;
+      if (q && !smart) this.loadSmart(q);
+      const smartHTML = smart && smart.items.length ? `
+        <div class="results-heading smart">${ICON.check} ${esc(smart.label)}</div>
+        <div class="res-grid">${smart.items.map(e => e.kind === 'live' ? `
+          <div class="g-item focusable" data-fk="${entryFk('ai', e)}" ${act(() => playLive(e.data, S.cat.live))}>
+            ${artwork(e.data.streamIcon, e.data.cleanName, { fit: true, lazy: true })}
+          </div>` : `
+          <div class="g-item focusable" data-fk="${entryFk('ai', e)}" ${act(() => openDetail(e.kind, e.data))}>
+            ${artwork(entryArt(e), e.data.cleanName, { lazy: true })}<div class="ri-n">${nLogo('xs')}</div>
+          </div>`).join('')}</div>` : '';
+      if (smart && smart.items.length && !(live.length + vod.length)) heading = 'Other results';
       mount(box, `
-        <div class="results-heading">${esc(heading)}</div>
+        ${smartHTML}
+        ${smartHTML && !(live.length + vod.length) ? '' : `<div class="results-heading">${esc(heading)}</div>`}
         ${live.length ? `<div class="results-sub">Live Channels</div><div class="res-live">${live.map(ch => `
           <div class="ch-tile focusable" data-fk="sl-${ch.streamId}" ${act(() => playLive(ch, live))}>
             <div class="ch-art">${artwork(ch.streamIcon, ch.cleanName, { fit: true, lazy: true })}</div>
@@ -2425,6 +2460,17 @@
         ${q && !live.length && !vod.length ? '<p class="helper-text">Try another title, channel, or fewer letters.</p>' : ''}`);
       box.scrollTop = 0;
       if (hadFocus) Focus.set(Focus.first(box) || $('#search-screen [data-fk="k-A"]'));
+    },
+
+    loadSmart(q) {
+      clearTimeout(this.smartTimer);
+      this.smartTimer = setTimeout(async () => {
+        const f = await Smart.searchFilters(q);
+        if (!f || this.query.trim() !== q || S.screen !== 'search') return;
+        const items = Smart.applyFilters(f, S.cat);
+        this.smart = { q, label: Smart.describe(f), items };
+        if (items.length) this.renderResults();
+      }, 900);
     },
 
     defaultFocus() { return $('#search-screen [data-fk="k-A"]'); }
@@ -2574,6 +2620,214 @@
 
   // ------------------------------------------------------------------ Full-Screen Player + Netflix OSD
 
+  // ------------------------------------------------------------------ Smart playback (Ollama Cloud via Smart)
+  // Credits: frames near the end tell us when the end credits really start, so the next-episode countdown
+  // and "watched" follow the picture, not a fixed time. Intro: frames in the first minutes find the opening
+  // titles for Skip Intro. Both are saved as markers, so a title is only analysed once per household.
+  // Live: two frames ~3 s apart catch channels that are black, frozen or off air.
+
+  const PlayerAI = {
+    item: null,
+    ref: null,
+    marker: null,
+    busy: false,
+    lastCheck: 0,
+    creditsHit: null,
+    creditsDone: false,
+    intro: null,
+    liveDone: false,
+    playingSince: 0,
+    skipShown: false,
+    skipTo: 0,
+
+    start(item) {
+      this.stop();
+      this.item = item;
+      this.intro = { start: null, last: null, done: false };
+      if (item.kind === 'live') return;
+      this.ref = item.kind === 'movie' ? { kind: 'movie', id: item.streamId } : { kind: 'episode', id: item.episode.episodeId };
+      Cloud.getMarker(this.ref.kind, this.ref.id).then(m => { if (this.item === item) this.marker = m || {}; });
+    },
+
+    stop() {
+      this.item = null;
+      this.marker = null;
+      this.busy = false;
+      this.lastCheck = 0;
+      this.creditsHit = null;
+      this.creditsDone = false;
+      this.liveDone = false;
+      this.playingSince = 0;
+      this.hideSkip();
+      this.hideBanner();
+    },
+
+    /** Past the detected start of the credits (progress then saves as finished). */
+    pastCredits(st) {
+      return !!(this.marker && typeof this.marker.creditsAt === 'number' && this.marker.creditsAt > 0 && st.position >= this.marker.creditsAt);
+    },
+
+    tick(st) {
+      const it = this.item;
+      if (!it) return;
+      if (it.kind === 'live') { this.liveTick(st); return; }
+      const m = this.marker;
+      if (!m || !st.duration) return;
+      const pos = st.position || 0;
+      const dur = st.duration;
+      if (!this.creditsDone) {
+        if (typeof m.creditsAt === 'number' && m.creditsAt > 0) {
+          if (pos >= m.creditsAt && pos < dur - 2) this.creditsReached(st);
+        } else if (dur > 300 && pos >= Math.max(dur * 0.8, dur - 600) && st.playing) {
+          this.check('credits', pos, st);
+        }
+      }
+      if (it.kind === 'episode') {
+        if (typeof m.introEnd === 'number') {
+          const from = m.introStart || 0;
+          if (m.introEnd > from + 5 && pos >= from - 1 && pos < m.introEnd - 3) this.showSkip(m.introEnd);
+          else this.hideSkip();
+        } else if (!this.intro.done && pos < 300 && st.playing) {
+          this.check('intro', pos, st);
+        }
+      }
+    },
+
+    async check(task, pos, st) {
+      if (this.busy || Date.now() - this.lastCheck < 10000 || Smart.disabled) return;
+      const it = this.item;
+      this.busy = true;
+      this.lastCheck = Date.now();
+      try {
+        const f = await Smart.frame();
+        if (!f || this.item !== it) return;
+        const r = await Smart.frameCheck(task, [f.b64], it.title);
+        if (!r || this.item !== it) return;
+        if (task === 'credits') this.creditsFrame(r, pos, st);
+        else this.introFrame(r, pos, st);
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    creditsFrame(r, pos, st) {
+      const p = r.probabilities || {};
+      const credits = (p.end_credits || 0) + (p.next_preview || 0);
+      if (credits < 0.75) { this.creditsHit = null; return; }
+      if (this.creditsHit == null) this.creditsHit = pos;
+      // Two sightings ~10 s apart, or one very sure one.
+      if (credits >= 0.92 || pos - this.creditsHit >= 8) {
+        this.marker.creditsAt = this.creditsHit;
+        Cloud.saveMarker(this.ref.kind, this.ref.id, { creditsAt: this.creditsHit, duration: st.duration });
+        this.creditsReached(st);
+      }
+    },
+
+    creditsReached(st) {
+      this.creditsDone = true;
+      Player.saveProgress(); // saves as finished now that we're past the credits
+      const it = this.item;
+      if (it.kind === 'episode' && S.prefs.autoplayNext && Player.nextEpisode() && Player.nextShownFor !== it.uid) Player.showNextCard();
+    },
+
+    introFrame(r, pos, st) {
+      const p = r.probabilities || {};
+      const intro = this.intro;
+      if ((p.intro || 0) >= 0.6) {
+        if (intro.start == null) intro.start = Math.max(0, pos - 5);
+        intro.last = pos;
+        return;
+      }
+      if (intro.start != null) {
+        intro.done = true; // the titles just ended
+        const end = Math.min(pos, intro.last + 5);
+        Object.assign(this.marker, { introStart: intro.start, introEnd: end });
+        Cloud.saveMarker(this.ref.kind, this.ref.id, { introStart: intro.start, introEnd: end, duration: st.duration });
+      } else if (pos > 240) {
+        intro.done = true; // no opening titles in the first four minutes: remember that too
+        Object.assign(this.marker, { introStart: 0, introEnd: 0 });
+        Cloud.saveMarker(this.ref.kind, this.ref.id, { introStart: 0, introEnd: 0, duration: st.duration });
+      }
+    },
+
+    showSkip(to) {
+      this.skipTo = to;
+      if (this.skipShown) return;
+      const slot = $('#p-skip-slot');
+      if (!slot) return;
+      this.skipShown = true;
+      mount(slot, `<div class="tv-btn skip-intro focusable" data-fk="skip-intro" ${act(() => this.skipNow())}>Skip Intro</div>`);
+      if (Player.osdOn) Focus.set(slot.querySelector('[data-fk="skip-intro"]'));
+    },
+
+    hideSkip() {
+      if (!this.skipShown) return;
+      this.skipShown = false;
+      const slot = $('#p-skip-slot');
+      const hadFocus = slot && Focus.cur && slot.contains(Focus.cur);
+      if (slot) slot.innerHTML = '';
+      if (hadFocus && S.screen === 'player') Focus.set(Player.defaultFocus());
+    },
+
+    skipNow() {
+      const to = this.skipTo;
+      this.hideSkip();
+      VideoAPI.seekTo(to);
+      Player.st.position = to;
+      Player.updateUI();
+    },
+
+    liveTick(st) {
+      if (this.liveDone) return;
+      if (!st.playing) { this.playingSince = 0; return; }
+      if (!this.playingSince) { this.playingSince = Date.now(); return; }
+      if (Date.now() - this.playingSince < 10000 || this.busy || Smart.disabled) return;
+      this.liveDone = true;
+      this.busy = true;
+      const it = this.item;
+      (async () => {
+        try {
+          const a = await Smart.frame();
+          await new Promise(r => setTimeout(r, 3000));
+          const b = await Smart.frame();
+          if (!a || !b || this.item !== it) return;
+          const r = await Smart.frameCheck('live', [a.b64, b.b64], it.title);
+          if (!r || this.item !== it) return;
+          const p = (r.probabilities || {})[r.label] || 0;
+          if (r.label && r.label !== 'ok' && p >= 0.7 && r.confidence >= 0.5) this.offAir(r.label);
+        } finally {
+          this.busy = false;
+        }
+      })();
+    },
+
+    offAir(label) {
+      const it = this.item;
+      const slot = $('#p-ai-slot');
+      if (!slot || !it.channel) return;
+      const alt = Smart.alternatives(it.channel, S.cat.live)[0];
+      const msg = { black: 'This channel is showing a black screen.', frozen: 'This channel’s picture looks frozen.', offline: 'This channel looks off air.' }[label] || 'This channel may not be working.';
+      mount(slot, `
+        <div class="ai-banner" data-group="ai">
+          <div class="ai-banner-text">${esc(msg)}</div>
+          <div class="modal-actions">
+            ${alt ? `<div class="tv-btn focusable" data-fk="ai-alt" ${act(() => { this.hideBanner(); playLive(alt, it.channelList); })}>${ICON.play} Try ${esc(alt.cleanName)}</div>` : ''}
+            <div class="tv-btn focusable" data-fk="ai-keep" ${act(() => this.hideBanner())}>Keep Watching</div>
+          </div>
+        </div>`);
+      Player.showOSD(true);
+      Focus.set(slot.querySelector('[data-fk="ai-alt"], [data-fk="ai-keep"]'));
+    },
+
+    hideBanner() {
+      const slot = $('#p-ai-slot');
+      if (!slot || !slot.innerHTML) return;
+      const hadFocus = Focus.cur && slot.contains(Focus.cur);
+      slot.innerHTML = '';
+      if (hadFocus && S.screen === 'player') { Focus.set(Player.defaultFocus()); Player.scheduleHide(); }
+    }
+  };
+
   const Player = {
     item: null,
     st: {},
@@ -2605,6 +2859,7 @@
       else this.render();
       stage.classList.add('video-passthrough');
       VideoAPI.start(item.url, item.uid, item.resume || 0);
+      PlayerAI.start(item);
       if (this.aspect !== 'fit') VideoAPI.setAspect(this.aspect);
       logTaste(item.kind, item.data || item.series || item.channel || { cleanName: item.title, categoryId: item.categoryId }, 'play', 3.0);
       if (item.kind === 'live') recordProgress(item, 0, 0);
@@ -2677,6 +2932,8 @@
           </div>
         </div>
         <div id="p-next-slot"></div>
+        <div id="p-skip-slot"></div>
+        <div id="p-ai-slot"></div>
         <div class="player-subs" id="p-subs" hidden></div>`);
       if (live && it.channel) {
         getEPG(it.channel.streamId).then(list => {
@@ -2760,6 +3017,7 @@
         if (this.item.kind !== 'live') { this.exit(); return; }
       }
       if (st.event === 'tick' && Date.now() - this.lastSave > 5000) this.saveProgress();
+      PlayerAI.tick(this.st);
       if (this.item.kind === 'episode' && S.prefs.autoplayNext && st.duration > 120 &&
         st.duration - st.position <= 25 && this.nextShownFor !== this.item.uid && this.nextEpisode()) {
         this.showNextCard();
@@ -2774,7 +3032,7 @@
       const st = this.st || {};
       this.lastSave = Date.now();
       if (!st.duration && !ended) return;
-      const pos = ended ? (st.duration || 0) : (st.position || 0);
+      const pos = ended || PlayerAI.pastCredits(st) ? (st.duration || 0) : (st.position || 0);
       recordProgress(it, pos, st.duration || 0);
     },
 
@@ -2969,6 +3227,7 @@
 
     exit() {
       this.saveProgress();
+      PlayerAI.stop();
       Cloud.flush();
       this.cancelNext(true);
       clearTimeout(this.osdTimer);
@@ -3091,6 +3350,7 @@
       }
       const live = this.item && this.item.kind === 'live';
       if (!this.osdOn) {
+        if (key === 'SELECT' && PlayerAI.skipShown) { PlayerAI.skipNow(); return true; }
         if (key === 'LEFT' || key === 'RIGHT') {
           if (live) this.showOSD();
           else this.seekBy(key === 'LEFT' ? -10 : 10);
@@ -3164,6 +3424,7 @@
     onNativeVideoState(st) { Player.onState(st || {}); },
 
     onThumb(id, sec, dataUrl) { Player.onThumb(id, sec, dataUrl); },
+    onFrame(id, b64, black) { Smart.onFrame(id, b64, black); },
 
     onNativeCues(text) {
       const el = $('#p-subs');

@@ -15,6 +15,7 @@ const Cloud = (() => {
 
   let db = null;
   let auth = null;
+  let functions = null;
   let FieldValue = null;
   let Timestamp = null;
   let tvUid = null;
@@ -47,13 +48,15 @@ const Cloud = (() => {
   function start() {
     if (started) return started;
     started = (async () => {
-      for (const f of ['app', 'auth', 'firestore']) await loadScript(`vendor/firebase/firebase-${f}-compat.js`);
+      for (const f of ['app', 'auth', 'firestore', 'functions']) await loadScript(`vendor/firebase/firebase-${f}-compat.js`);
       firebase.initializeApp(window.NUCFLIX_FIREBASE_CONFIG);
       auth = firebase.auth();
       db = firebase.firestore();
+      functions = firebase.app().functions('us-central1');
       if (EMULATOR) {
         auth.useEmulator('http://127.0.0.1:9099', { disableWarnings: true });
         db.useEmulator('127.0.0.1', 8181);
+        functions.useEmulator('127.0.0.1', 5001);
       }
       FieldValue = firebase.firestore.FieldValue;
       Timestamp = firebase.firestore.Timestamp;
@@ -238,6 +241,43 @@ const Cloud = (() => {
     profileRef().set({ prefs, updatedAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => { });
   }
 
+  // ---------------------------------------------------------------- AI (Cloud Functions) + its shared data
+
+  /** Calls a household-only AI function (frameCheck, classifyCategories, smartSearch). */
+  async function ai(name, data) {
+    if (!functions || !owner) throw new Error('Not paired');
+    const res = await functions.httpsCallable(name, { timeout: 30000 })(Object.assign({ ownerUid: owner }, data));
+    return res.data;
+  }
+
+  /** Credits / intro times for a title on the current line ({ creditsAt, introStart, introEnd } or null). */
+  async function getMarker(kind, id) {
+    if (!session) return null;
+    try {
+      const d = await db.doc(`users/${owner}/markers/${contentKey(kind, id)}`).get();
+      return d.exists ? d.data() : null;
+    } catch (e) { return null; }
+  }
+
+  function saveMarker(kind, id, fields) {
+    if (!session) return;
+    const doc = { lineId: session.lineId, kind, source: 'ai', updatedAt: FieldValue.serverTimestamp() };
+    for (const k of ['creditsAt', 'introStart', 'introEnd', 'duration']) {
+      if (typeof fields[k] === 'number' && isFinite(fields[k])) doc[k] = Math.round(fields[k] * 10) / 10;
+    }
+    if (!doc.duration) return;
+    db.doc(`users/${owner}/markers/${contentKey(kind, id)}`).set(doc, { merge: true }).catch(e => console.warn('marker', e));
+  }
+
+  /** Live AI category tags for a line: cb({ 'live:12': { kids, adult, lang, genre }, ... }). */
+  let tagsUnsub = null;
+  function watchLineTags(lineId, cb) {
+    if (tagsUnsub) tagsUnsub();
+    tagsUnsub = null;
+    if (!db || !owner || !lineId) return;
+    tagsUnsub = db.doc(`users/${owner}/lineTags/${lineId}`).onSnapshot(d => cb((d.exists && d.get('cats')) || {}), () => { });
+  }
+
   function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n) : s; }
 
   window.addEventListener('pagehide', flush);
@@ -245,7 +285,7 @@ const Cloud = (() => {
 
   return {
     start, beginPairing, unpair, watchHousehold, stopHousehold, startSession, stopSession,
-    setFavorite, saveProgress, flush, deleteProgress, savePrefs,
+    setFavorite, saveProgress, flush, deleteProgress, savePrefs, ai, getMarker, saveMarker, watchLineTags,
     get paired() { return !!owner; },
     get ownerName() { return ls.get(K.ownerName) || ''; },
     get lastProfileId() { return ls.get(K.profile); },

@@ -260,3 +260,45 @@ describe('TV pairing flow', () => {
     await assertSucceeds(deleteDoc(doc(phone(), `pairing/${CODE}`)));
   });
 });
+
+describe('AI markers and category tags', () => {
+  const marker = (extra = {}) => ({
+    lineId: 'L1', kind: 'episode', creditsAt: 1302.5, introStart: 30, introEnd: 85, duration: 1400,
+    source: 'ai', updatedAt: serverTimestamp(), ...extra
+  });
+
+  it('owner and paired TV save and read markers', async () => {
+    await pairedHousehold();
+    await assertSucceeds(setDoc(doc(tv(), 'users/owner/markers/L1:episode:142613'), marker()));
+    await assertSucceeds(getDoc(doc(phone(), 'users/owner/markers/L1:episode:142613')));
+    const { introStart, introEnd, ...movieMarker } = marker({ kind: 'movie' });
+    await assertSucceeds(setDoc(doc(phone(), 'users/owner/markers/L1:movie:5'), movieMarker));
+  });
+
+  it('markers are validated and closed to outsiders', async () => {
+    await pairedHousehold();
+    await assertFails(setDoc(doc(tv('tv9'), 'users/owner/markers/L1:episode:1'), marker()));
+    await assertFails(getDoc(doc(phone('intruder'), 'users/owner/markers/L1:episode:1')));
+    await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ kind: 'live' })));
+    await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ source: 'guess' })));
+    await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ creditsAt: 'soon' })));
+    await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ extra: 1 })));
+    await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ duration: 0 })));
+  });
+
+  it('category tags are readable by the household and written only by Cloud Functions', async () => {
+    await pairedHousehold();
+    await seed(db => setDoc(doc(db, 'users/owner/lineTags/L1'), { cats: { 'live:1': { kids: 0.9, adult: 0, lang: 'en', genre: 'kids' } } }));
+    await assertSucceeds(getDoc(doc(tv(), 'users/owner/lineTags/L1')));
+    await assertSucceeds(getDoc(doc(phone(), 'users/owner/lineTags/L1')));
+    await assertFails(getDoc(doc(phone('intruder'), 'users/owner/lineTags/L1')));
+    await assertFails(setDoc(doc(phone(), 'users/owner/lineTags/L1'), { cats: {} }));
+    await assertFails(setDoc(doc(tv(), 'users/owner/lineTags/L1'), { cats: {} }));
+  });
+
+  it('usage counters are never visible to apps', async () => {
+    await seed(db => setDoc(doc(db, 'aiUsage/owner'), { day: '2026-10-28', calls: 3 }));
+    await assertFails(getDoc(doc(phone(), 'aiUsage/owner')));
+    await assertFails(setDoc(doc(phone(), 'aiUsage/owner'), { day: '2026-10-28', calls: 0 }));
+  });
+});

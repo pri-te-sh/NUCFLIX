@@ -1,11 +1,13 @@
 {
   "name": "nucflix-firebase",
   "private": true,
-  "description": "Firestore security rules for NucFlix (iOS + Fire TV) and their emulator tests.",
+  "description": "Firestore security rules, AI Cloud Functions and their emulator tests for NucFlix (iOS + Fire TV).",
   "type": "module",
   "scripts": {
     "test": "firebase emulators:exec --only firestore --project demo-nucflix \"node --test test/rules.test.js\"",
-    "deploy:rules": "firebase deploy --only firestore:rules --project nucflix-ad6e1"
+    "deploy:rules": "firebase deploy --only firestore:rules --project nucflix-ad6e1",
+    "test:functions": "firebase emulators:exec --only auth,firestore,functions --project demo-nucflix \"node --test test/functions.test.js\"",
+    "deploy:functions": "firebase deploy --only functions --project nucflix-ad6e1"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "6.0.0",
