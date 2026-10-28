@@ -1,0 +1,11 @@
+# Build output
+build/
+
+# Downloaded by fetch-libs.sh
+libs/
+tools/r8.jar
+
+# Signing key and local settings (keep backed up, never commit)
+keystore.jks
+*.jks
+local.properties

@@ -1,0 +1,214 @@
+rules_version = '2';
+
+// NucFlix household data, shared by the iOS app and paired Fire TVs.
+//
+// users/{uid}                          household account (uid = the signed-in phone user, Google or email)
+//   lines/{lineId}                     Xtream logins; written from the phone only, readable by paired TVs
+//   profiles/{profileId}               people (you, kids, ...); TVs may only change a profile's prefs
+//     progress/{contentKey}            watch position per title, contentKey = "<lineId>:<kind>:<id>"
+//     favorites/{contentKey}           My List / favourite channels
+//   members/{deviceUid}                paired TVs (anonymous Firebase users) allowed into this household
+//   devices/{deviceUid}                presence + "now playing" per device
+// pairing/{code}                       short-lived TV pairing codes (TV creates, phone approves)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- helpers
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Phone users only: TVs sign in anonymously and must never own a household.
+    function isAccountUser() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isOwner(uid) {
+      return isAccountUser() && request.auth.uid == uid;
+    }
+
+    function isMember(uid) {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(uid)/members/$(request.auth.uid));
+    }
+
+    function canAccess(uid) {
+      return isOwner(uid) || isMember(uid);
+    }
+
+    function str(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    function optStr(data, key, max) {
+      return !(key in data) || str(data[key], max);
+    }
+
+    function nonEmpty(v, max) {
+      return str(v, max) && v.size() > 0;
+    }
+
+    function optBool(data, key) {
+      return !(key in data) || data[key] is bool;
+    }
+
+    function optNum(data, key) {
+      return !(key in data) || data[key] is number;
+    }
+
+    function optMap(data, key) {
+      return !(key in data) || data[key] is map;
+    }
+
+    function stampedNow(data) {
+      return data.updatedAt == request.time;
+    }
+
+    // ---------------------------------------------------------------- household
+
+    match /users/{uid} {
+      allow read: if canAccess(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['name', 'createdAt', 'updatedAt'])
+        && optStr(request.resource.data, 'name', 80);
+      allow delete: if isOwner(uid);
+
+      // Xtream lines. Only the phone edits them; paired TVs read them (into memory) to play streams.
+      match /lines/{lineId} {
+        allow read: if canAccess(uid);
+        allow create, update: if isOwner(uid) && validLine(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+
+      match /profiles/{profileId} {
+        allow read: if canAccess(uid);
+        allow create: if isOwner(uid) && validProfile(request.resource.data);
+        allow update: if validProfile(request.resource.data)
+          && (isOwner(uid)
+              || (isMember(uid)
+                  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['prefs', 'updatedAt'])));
+        allow delete: if isOwner(uid);
+
+        match /progress/{contentKey} {
+          allow read: if canAccess(uid);
+          allow create, update: if canAccess(uid) && validProgress(contentKey, request.resource.data);
+          allow delete: if canAccess(uid);
+        }
+
+        match /favorites/{contentKey} {
+          allow read: if canAccess(uid);
+          allow create, update: if canAccess(uid) && validFavorite(contentKey, request.resource.data);
+          allow delete: if canAccess(uid);
+        }
+      }
+
+      // Paired TVs. The owner adds and removes them; a TV may read or remove its own membership.
+      match /members/{deviceUid} {
+        allow read: if isOwner(uid) || (signedIn() && request.auth.uid == deviceUid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['name', 'platform', 'pairedAt'])
+          && nonEmpty(request.resource.data.name, 80)
+          && optStr(request.resource.data, 'platform', 20);
+        allow delete: if isOwner(uid) || (signedIn() && request.auth.uid == deviceUid);
+      }
+
+      // Presence / now playing. Paired TVs write only their own document; the owner's phones any.
+      match /devices/{deviceUid} {
+        allow read: if canAccess(uid);
+        allow create, update: if (isOwner(uid) || (isMember(uid) && request.auth.uid == deviceUid))
+          && validDevice(request.resource.data);
+        allow delete: if isOwner(uid) || (isMember(uid) && request.auth.uid == deviceUid);
+      }
+    }
+
+    // ---------------------------------------------------------------- TV pairing
+    // 1. TV (anonymous) creates pairing/{code} {tvUid, tvName, status:'pending', createdAt, expiresAt}.
+    // 2. Phone reads it by code, adds users/{uid}/members/{tvUid}, then sets status 'approved' + ownerUid.
+    // 3. TV sees ownerUid and starts reading users/{ownerUid}/...; it deletes the code afterwards.
+    // Codes can't be listed, only fetched by exact value, and expire after at most 15 minutes.
+
+    match /pairing/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && code.matches('^[A-HJ-NP-Z2-9]{8}$')
+        && request.resource.data.keys().hasOnly(['tvUid', 'tvName', 'status', 'createdAt', 'expiresAt'])
+        && request.resource.data.tvUid == request.auth.uid
+        && nonEmpty(request.resource.data.tvName, 80)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(15, 'm');
+      allow update: if isAccountUser()
+        && resource.data.status == 'pending'
+        && resource.data.expiresAt > request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'ownerUid', 'ownerName', 'approvedAt'])
+        && request.resource.data.status == 'approved'
+        && request.resource.data.ownerUid == request.auth.uid
+        && optStr(request.resource.data, 'ownerName', 80)
+        && request.resource.data.approvedAt == request.time
+        // The membership must exist once this write lands (the phone writes both in one batch).
+        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/members/$(resource.data.tvUid));
+      allow delete: if signedIn()
+        && (request.auth.uid == resource.data.tvUid || request.auth.uid == resource.data.get('ownerUid', ''));
+    }
+
+    // ---------------------------------------------------------------- document shapes
+
+    function validLine(d) {
+      return d.keys().hasOnly(['name', 'serverURL', 'username', 'password', 'createdAt', 'updatedAt'])
+        && nonEmpty(d.name, 80)
+        && nonEmpty(d.serverURL, 300)
+        && nonEmpty(d.username, 200)
+        && str(d.password, 200);
+    }
+
+    function validProfile(d) {
+      return d.keys().hasOnly(['name', 'avatar', 'kids', 'prefs', 'order', 'createdAt', 'updatedAt'])
+        && nonEmpty(d.name, 40)
+        && optStr(d, 'avatar', 40)
+        && optBool(d, 'kids')
+        && optMap(d, 'prefs')
+        && optNum(d, 'order');
+    }
+
+    function validProgress(key, d) {
+      return key.size() <= 120
+        && d.keys().hasOnly(['lineId', 'kind', 'streamId', 'seriesId', 'episodeId', 'season', 'episode',
+                             'title', 'subtitle', 'artwork', 'ext', 'position', 'duration', 'updatedAt', 'device'])
+        && nonEmpty(d.lineId, 60)
+        && d.kind in ['movie', 'episode', 'live']
+        && d.position is number && d.position >= 0
+        && d.duration is number && d.duration >= 0
+        && nonEmpty(d.title, 300)
+        && optStr(d, 'subtitle', 300)
+        && optStr(d, 'artwork', 1000)
+        && optStr(d, 'ext', 10)
+        && optStr(d, 'device', 80)
+        && stampedNow(d);
+    }
+
+    function validFavorite(key, d) {
+      return key.size() <= 120
+        && d.keys().hasOnly(['lineId', 'kind', 'id', 'title', 'artwork', 'ext', 'categoryId', 'addedAt'])
+        && nonEmpty(d.lineId, 60)
+        && d.kind in ['movie', 'series', 'live']
+        && (d.id is int || d.id is string)
+        && nonEmpty(d.title, 300)
+        && optStr(d, 'artwork', 1000)
+        && optStr(d, 'ext', 10)
+        && optStr(d, 'categoryId', 40)
+        && d.addedAt == request.time;
+    }
+
+    function validDevice(d) {
+      return d.keys().hasOnly(['name', 'platform', 'lastSeen', 'nowPlaying'])
+        && nonEmpty(d.name, 80)
+        && d.platform in ['ios', 'firetv']
+        && d.lastSeen == request.time
+        && (!('nowPlaying' in d) || d.nowPlaying == null || d.nowPlaying is map);
+    }
+  }
+}

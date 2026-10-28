@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no">
+<title>NucFlix for Fire TV</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- 1920x1080 10-foot TV stage scaled to the screen -->
+<div id="stage">
+  <!-- Netflix TV top navigation: profile avatar · centered tabs · N logo -->
+  <header id="nav" hidden>
+    <div class="nav-icon-btn" data-nav="account" title="Account &amp; Settings">
+      <div class="avatar" id="nav-avatar">N</div>
+    </div>
+    <nav id="nav-tabs">
+      <div class="nav-item icon" data-nav="search" title="Search">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+      </div>
+      <div class="nav-item" data-nav="home">Home</div>
+      <div class="nav-item" data-nav="series">Shows</div>
+      <div class="nav-item" data-nav="movies">Movies</div>
+      <div class="nav-item" data-nav="live">Live TV</div>
+      <div class="nav-item" data-nav="mylist">My List</div>
+    </nav>
+    <div class="nav-brand" aria-hidden="true">
+      <div class="nf-wordmark"><span style="transform:scaleY(1.17)">N</span><span style="transform:scaleY(1.075)">U</span><span style="transform:scaleY(1.02)">C</span><span>F</span><span style="transform:scaleY(1.02)">L</span><span style="transform:scaleY(1.075)">I</span><span style="transform:scaleY(1.17)">X</span></div>
+    </div>
+  </header>
+
+  <!-- Main Screens -->
+  <main id="screens">
+    <section id="pair-screen" class="screen"></section>
+    <section id="who-screen" class="screen"></section>
+    <section id="home-screen" class="screen"></section>
+    <section id="live-screen" class="screen"></section>
+    <section id="movies-screen" class="screen"></section>
+    <section id="series-screen" class="screen"></section>
+    <section id="search-screen" class="screen"></section>
+    <section id="detail-screen" class="screen"></section>
+    <section id="mylist-screen" class="screen"></section>
+    <section id="account-screen" class="screen"></section>
+    <section id="player-screen" class="screen"></section>
+  </main>
+
+  <!-- Modal layer (TV Guide, Category Explorer, Track Picker, confirmations) -->
+  <div id="modal-layer" hidden></div>
+
+  <!-- Splash: NUCFLIX letters rise -> ta-dum pop -> zoom through a colour burst. Pure CSS transform/opacity
+       keyframes that start at page load, so the compositor keeps them smooth while the catalog loads. -->
+  <div id="splash">
+    <div id="splash-burst" aria-hidden="true"><i style="--c:#E50914;--w:9px;--dx:-592px;--d:50ms"></i><i style="--c:#FF3D57;--w:14px;--dx:-802px;--d:9ms"></i><i style="--c:#FF8A00;--w:17px;--dx:197px;--d:12ms"></i><i style="--c:#FFD23F;--w:9px;--dx:293px;--d:7ms"></i><i style="--c:#3DDC97;--w:18px;--dx:139px;--d:27ms"></i><i style="--c:#2D9CDB;--w:4px;--dx:-724px;--d:55ms"></i><i style="--c:#7B2FF7;--w:10px;--dx:-757px;--d:30ms"></i><i style="--c:#F72585;--w:5px;--dx:228px;--d:54ms"></i><i style="--c:#00C2FF;--w:4px;--dx:793px;--d:72ms"></i><i style="--c:#B20710;--w:5px;--dx:-443px;--d:80ms"></i><i style="--c:#E50914;--w:14px;--dx:293px;--d:7ms"></i><i style="--c:#FF3D57;--w:13px;--dx:299px;--d:50ms"></i><i style="--c:#FF8A00;--w:4px;--dx:-448px;--d:5ms"></i><i style="--c:#FFD23F;--w:12px;--dx:858px;--d:17ms"></i><i style="--c:#3DDC97;--w:8px;--dx:-42px;--d:18ms"></i><i style="--c:#2D9CDB;--w:12px;--dx:-659px;--d:73ms"></i><i style="--c:#7B2FF7;--w:8px;--dx:247px;--d:104ms"></i><i style="--c:#F72585;--w:14px;--dx:-530px;--d:13ms"></i></div>
+    <div id="splash-zoom">
+      <div id="splash-logo">
+        <div class="nf-wordmark splash-word" aria-label="NUCFLIX"><span style="--s:1.17;--i:0"><b>N</b></span><span style="--s:1.075;--i:1"><b>U</b></span><span style="--s:1.02;--i:2"><b>C</b></span><span style="--s:1;--i:3"><b>F</b></span><span style="--s:1.02;--i:4"><b>L</b></span><span style="--s:1.075;--i:5"><b>I</b></span><span style="--s:1.17;--i:6"><b>X</b></span></div>
+        <div id="splash-bar"><i></i></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Banner -->
+  <div id="toast" hidden></div>
+</div>
+
+<!-- Fallback HTML5 video for desktop browser preview when not running on Fire TV -->
+<video id="fallback-video" hidden playsinline></video>
+
+<script src="firebase-config.js"></script>
+<script src="cloud.js"></script>
+<script src="xtream.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
