@@ -775,9 +775,12 @@ private struct PersonalizedHeroCarousel: View {
     let picks: [HeroPick]
     @Binding var ambientColor: Color
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: String = ""
     @State private var isInteracting = false
     @State private var kenBurns = false
+    /// False while a title is pushed on top of Home (the carousel stays alive underneath).
+    @State private var isOnScreen = false
 
     private let rotationInterval: UInt64 = 7_000_000_000
 
@@ -813,28 +816,31 @@ private struct PersonalizedHeroCarousel: View {
             .animation(.snappy, value: selection)
         }
         .onAppear {
+            isOnScreen = true
             if selection.isEmpty || !picks.contains(where: { $0.id == selection }) {
                 selection = picks.first?.id ?? ""
             }
         }
+        .onDisappear { isOnScreen = false }
         .onChange(of: picks.map(\.id)) { _, ids in
             if !ids.contains(selection) {
                 selection = ids.first ?? ""
             }
         }
-        // Auto-advance; restarts whenever the page changes (manual swipe resets the timer)
-        .task(id: selection) {
+        // Auto-advance while Home is actually visible; restarts whenever the page changes (a manual swipe
+        // resets the timer) or Home comes back on screen.
+        .task(id: "\(selection)|\(isOnScreen && scenePhase == .active)") {
             kenBurns = false
             withAnimation(.linear(duration: 7.5)) { kenBurns = true }
             await updateAmbientColor()
+            guard isOnScreen, scenePhase == .active else { return }
             try? await Task.sleep(nanoseconds: rotationInterval)
-            guard !Task.isCancelled, !isInteracting, picks.count > 1 else { return }
+            guard !Task.isCancelled, isOnScreen, scenePhase == .active, !isInteracting, picks.count > 1 else { return }
             let next = picks[(currentIndex + 1) % picks.count].id
             withAnimation(.easeInOut(duration: 0.6)) {
                 selection = next
             }
         }
-        .sensoryFeedback(.selection, trigger: selection)
     }
 
     @ViewBuilder
