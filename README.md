@@ -57,7 +57,8 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 - Timeline scrubbing with **thumbnail previews**
 - **Autoplay next episode** with a countdown, timed to the real end credits
 - **Skip Intro** and the dead-channel check, using frames grabbed from the player
-- Repairs broken MPEG-TS timestamps from some providers
+- Repairs broken MPEG-TS timestamps from some providers, and MKV files missing their H.264 header
+- Plays **DTS and Dolby TrueHD** audio (which Fire TVs can't decode) with a built-in FFmpeg decoder
 - Search from your phone with the built-in **phone helper**
 
 </td>
@@ -316,7 +317,9 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 │   └── Views/                Home, Live TV, Movies, Series, Search, player, account
 ├── NucFlix.xcodeproj
 ├── NucFlixFireTV/            Fire TV app
-│   ├── src/                  Java: activity, ExoPlayer, frame capture, Xtream proxy, phone helper
+│   ├── src/                  Java: activity, ExoPlayer, frame capture, Xtream proxy, phone helper,
+│   │                         patched MKV extractor, Media3 FFmpeg audio renderer
+│   ├── jniLibs/              FFmpeg audio decoders (DTS, TrueHD, AC-3, MP2) for ARM, built by tools/build-ffmpeg.sh
 │   ├── web/                  10-foot UI (HTML/CSS/JS), Firebase sync (cloud.js), AI helpers (smart.js)
 │   └── build.sh              Gradle-less build
 ├── firebase/                 Firestore rules, emulator tests, deploy scripts
@@ -354,6 +357,8 @@ Bundled third-party pieces keep their own licenses (the AI models run on Ollama 
 - The Firebase JavaScript SDK in `NucFlixFireTV/web/vendor/firebase/` (Apache 2.0).
 - The Bebas Neue font in `NucFlixFireTV/web/fonts/` (SIL Open Font License, see `OFL.txt`).
 - MobileVLCKit, downloaded by `scripts/fetch-vlckit.sh` (LGPL 2.1).
+- FFmpeg 6.1.2's audio decoders in `NucFlixFireTV/jniLibs/` (LGPL 2.1 or later, built without GPL or non-free parts; `NucFlixFireTV/tools/build-ffmpeg.sh` shows exactly how, and fetches the source).
+- Media3 sources in `NucFlixFireTV/src/androidx/` (Apache 2.0): the FFmpeg audio renderer, and a patched copy of the MKV extractor (changes marked "NucFlix").
 
 ## ⚖️ Disclaimer
 
