@@ -48,6 +48,9 @@ java -Xmx2g -cp tools/r8.jar com.android.tools.r8.R8 --release --min-api 26 --li
     --pg-conf proguard-rules.pro --pg-conf "$OUT/aapt-rules.pro" $(for f in libs/*.pro; do echo --pg-conf "$f"; done) \
     --output "$OUT/dex" "$OUT/app-classes.jar" "${LIBS[@]}"
 (cd "$OUT/dex" && zip -q ../unsigned.apk classes*.dex)
+# FFmpeg audio decoders (DTS, TrueHD...) the Fire TV lacks, built by tools/build-ffmpeg.sh.
+mkdir -p "$OUT/native" && cp -R jniLibs "$OUT/native/lib"
+(cd "$OUT/native" && zip -q -r ../unsigned.apk lib)
 
 "$BT/zipalign" -f 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 # Signing key: keystore.jks + storePass in local.properties (both git-ignored). The first build creates them with a

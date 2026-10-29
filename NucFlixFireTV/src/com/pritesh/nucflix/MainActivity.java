@@ -17,6 +17,7 @@ import android.util.Base64;
 import android.view.PixelCopy;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.Surface;
 import android.view.SurfaceView;
@@ -114,6 +115,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private PhoneHelper phoneHelper;
 
     private static final long START_TIMEOUT_MS = 20_000;
+    private static final String TAG = "NucFlixPlayer";
     private static final int MAX_LIVE_RETRIES = 5;
     private static final int MAX_VOD_RETRIES = 3;
 
@@ -439,7 +441,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         if (exo != null) return exo;
         DefaultRenderersFactory renderers = new DefaultRenderersFactory(this)
                 .setEnableDecoderFallback(true)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF);
+                // The TV's own decoders first; FFmpeg (DTS, TrueHD...) only for tracks they can't play.
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
         // IPTV providers burst several seconds ahead and then send in real time, so start quickly but
         // wait for a real cushion after a stall (resuming on almost nothing just stalls again).
         // The byte cap keeps 4K/HEVC buffers sane on a 1.7 GB Fire TV.
@@ -868,8 +871,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 int type = group.getType();
                 if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue;
                 for (int t = 0; t < group.length; t++) {
-                    if (!group.isTrackSupported(t)) continue;
                     Format f = group.getTrackFormat(t);
+                    // Which tracks the TV can't decode (they're skipped silently, e.g. a film with no sound).
+                    Log.i(TAG, "track " + (type == C.TRACK_TYPE_AUDIO ? "audio " : "text ") + f.sampleMimeType
+                            + " codecs=" + f.codecs + " ch=" + f.channelCount + " supported=" + group.isTrackSupported(t));
+                    if (!group.isTrackSupported(t)) continue;
                     n++;
                     int index = g * 1000 + t;
                     JSONObject o = new JSONObject().put("index", index).put("name", trackName(f, n));
