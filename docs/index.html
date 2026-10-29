@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NUCFLIX: your IPTV, the streaming-app way</title>
+<meta name="description" content="NUCFLIX turns an Xtream Codes IPTV subscription into a polished streaming experience on iPhone and Fire TV, with one household account, synced profiles and on-device smarts.">
+<meta name="theme-color" content="#0b0b0c">
+<meta property="og:title" content="NUCFLIX">
+<meta property="og:description" content="Your IPTV, the streaming-app way. On iPhone and Fire TV, with one account across both.">
+<meta property="og:image" content="images/hero.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0b0c'/%3E%3Cpath d='M18 12h9l10 26V12h9v40h-9L27 26v26h-9z' fill='%23e50914'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  @font-face {
+    font-family: "Bebas Neue";
+    src: url("assets/BebasNeue-Regular.ttf") format("truetype");
+    font-display: swap;
+  }
+
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0c;
+    --bg-raised: #131315;
+    --bg-card: #17171a;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.14);
+    --text: #f4f4f5;
+    --text-2: #b4b4bb;
+    --text-3: #7d7d86;
+    --red: #e50914;
+    --red-hot: #ff2a35;
+    --red-glow: rgba(229, 9, 20, 0.35);
+    --radius: 18px;
+    --max: 1180px;
+    --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --display: "Bebas Neue", "Inter", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 400 16px/1.6 var(--font);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: inherit; text-decoration: none; }
+  ::selection { background: var(--red); color: #fff; }
+
+  .wrap { width: min(var(--max), 100% - 40px); margin-inline: auto; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 600 12px/1 var(--font); letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--red-hot);
+  }
+  .eyebrow::before { content: ""; width: 18px; height: 2px; background: currentColor; border-radius: 2px; }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
+  h2 { font: 800 clamp(30px, 4.2vw, 46px)/1.08 var(--font); margin-top: 14px; }
+  .lede { color: var(--text-2); font-size: clamp(16px, 1.6vw, 18px); max-width: 640px; margin: 16px 0 0; }
+  section { padding: clamp(72px, 10vw, 128px) 0; position: relative; }
+  .section-head { margin-bottom: clamp(36px, 5vw, 56px); }
+  .center { text-align: center; }
+  .center .lede { margin-inline: auto; }
+
+  /* ---------- nav ---------- */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: saturate(160%) blur(14px);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    background: rgba(11, 11, 12, 0.72);
+    border-bottom: 1px solid transparent;
+    transition: border-color .2s;
+  }
+  .nav.scrolled { border-bottom-color: var(--line); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+  .wordmark { font: 400 34px/1 var(--display); color: var(--red); letter-spacing: 0.02em; }
+  .nav-links { display: flex; gap: 28px; font-size: 14px; color: var(--text-2); }
+  .nav-links a:hover { color: var(--text); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    height: 46px; padding: 0 22px; border-radius: 999px;
+    font: 600 15px/1 var(--font); white-space: nowrap;
+    transition: transform .15s ease, background .2s, box-shadow .2s, border-color .2s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: var(--red); color: #fff; box-shadow: 0 10px 30px -10px var(--red-glow); }
+  .btn-primary:hover { background: var(--red-hot); box-shadow: 0 14px 36px -10px var(--red-glow); }
+  .btn-ghost { border: 1px solid var(--line-strong); color: var(--text); background: rgba(255,255,255,0.02); }
+  .btn-ghost:hover { border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.05); }
+  .btn-sm { height: 38px; padding: 0 16px; font-size: 14px; }
+  .btn svg { width: 18px; height: 18px; flex: none; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: clamp(56px, 8vw, 96px) 0 0; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: -20% -10% auto; height: 900px; z-index: -1;
+    background:
+      radial-gradient(60% 50% at 50% 30%, rgba(229, 9, 20, 0.28), transparent 70%),
+      radial-gradient(40% 30% at 85% 10%, rgba(255, 42, 53, 0.10), transparent 70%);
+  }
+  .hero-copy { text-align: center; max-width: 860px; margin-inline: auto; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 6px 14px 6px 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+    font-size: 13px; color: var(--text-2);
+  }
+  .pill b { background: var(--red); color: #fff; font-weight: 700; font-size: 11px; letter-spacing: .06em; padding: 4px 9px; border-radius: 999px; }
+  .hero h1 {
+    font: 800 clamp(40px, 7vw, 82px)/1.02 var(--font);
+    letter-spacing: -0.035em; margin-top: 24px;
+  }
+  .hero h1 .accent {
+    background: linear-gradient(100deg, #ff4d55, var(--red) 60%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    white-space: nowrap;
+  }
+  .hero .lede { margin: 22px auto 0; max-width: 680px; }
+  .hero-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 34px; }
+  .hero-meta { margin-top: 22px; color: var(--text-3); font-size: 13px; }
+
+  .stage { position: relative; margin: clamp(48px, 7vw, 80px) auto 0; max-width: 1040px; padding-bottom: 40px; }
+  .tv {
+    position: relative; width: 86%; border-radius: 14px; padding: 10px;
+    background: linear-gradient(180deg, #2a2a2e, #141416);
+    box-shadow: 0 50px 120px -30px rgba(0,0,0,.9), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 40px 120px -60px var(--red-glow);
+  }
+  .tv img { border-radius: 6px; width: 100%; }
+  .tv::after {
+    content: ""; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%);
+    width: 22%; height: 16px; border-radius: 0 0 10px 10px;
+    background: linear-gradient(180deg, #1f1f22, #0f0f11);
+  }
+  .phone {
+    position: absolute; right: 0; bottom: 0; width: 25%;
+    padding: 8px; border-radius: 34px;
+    background: linear-gradient(160deg, #3a3a3f, #18181b);
+    box-shadow: 0 40px 80px -20px rgba(0,0,0,.9), 0 0 0 1px rgba(255,255,255,0.08) inset;
+  }
+  .phone img { border-radius: 27px; }
+  .sync-chip {
+    position: absolute; left: 62%; top: 12%;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-radius: 12px;
+    background: rgba(20, 20, 22, 0.86); border: 1px solid var(--line-strong);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    font-size: 13px; font-weight: 600; box-shadow: 0 20px 40px -20px rgba(0,0,0,.8);
+  }
+  .sync-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #2fd36b; box-shadow: 0 0 0 4px rgba(47, 211, 107, 0.18); }
+  .sync-chip small { display: block; color: var(--text-3); font-weight: 500; font-size: 11px; }
+
+  /* ---------- stats ---------- */
+  .stats { border-block: 1px solid var(--line); background: var(--bg-raised); padding: 0; }
+  .stats .wrap { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .stat { padding: 30px 20px; text-align: center; border-left: 1px solid var(--line); }
+  .stat:first-child { border-left: 0; }
+  .stat strong { display: block; font: 400 46px/1 var(--display); letter-spacing: 0.02em; color: var(--text); }
+  .stat span { color: var(--text-3); font-size: 13px; }
+
+  /* ---------- cards ---------- */
+  .grid { display: grid; gap: 18px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .card {
+    position: relative; background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 28px;
+    transition: border-color .2s, transform .2s;
+  }
+  .card:hover { border-color: var(--line-strong); }
+  .card h3 { font: 700 19px/1.3 var(--font); margin-top: 18px; }
+  .card p { color: var(--text-2); margin: 10px 0 0; font-size: 15px; }
+  .icon {
+    width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+    background: rgba(229, 9, 20, 0.12); color: var(--red-hot);
+    border: 1px solid rgba(229, 9, 20, 0.25);
+  }
+  .icon svg { width: 22px; height: 22px; }
+
+  .platform { padding: 34px; overflow: hidden; }
+  .platform-head { display: flex; align-items: center; gap: 14px; }
+  .platform-head .icon { width: 52px; height: 52px; border-radius: 14px; }
+  .platform-head h3 { margin: 0; font-size: 22px; }
+  .platform-head p { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
+  .checks { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 12px; }
+  .checks li { display: grid; grid-template-columns: 20px 1fr; gap: 12px; color: var(--text-2); font-size: 15px; }
+  .checks li::before {
+    content: ""; width: 20px; height: 20px; border-radius: 50%; margin-top: 2px;
+    background: rgba(229, 9, 20, 0.14) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M6 10.5l2.5 2.5L14 7.5' fill='none' stroke='%23ff2a35' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat;
+  }
+  .checks b { color: var(--text); font-weight: 600; }
+
+  /* ---------- household ---------- */
+  .split { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(32px, 6vw, 72px); align-items: center; }
+  .shot { border-radius: 14px; border: 1px solid var(--line-strong); box-shadow: 0 40px 90px -30px rgba(0,0,0,.9); }
+  .steps { counter-reset: s; display: grid; gap: 22px; margin-top: 34px; }
+  .step { display: grid; grid-template-columns: 40px 1fr; gap: 16px; }
+  .step::before {
+    counter-increment: s; content: counter(s);
+    width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--bg-card); border: 1px solid var(--line-strong);
+    font: 700 15px/1 var(--font); color: var(--red-hot);
+  }
+  .step h3 { font: 700 17px/1.35 var(--font); }
+  .step p { margin: 4px 0 0; color: var(--text-2); font-size: 15px; }
+  .code-chip {
+    display: inline-block; font: 500 14px/1 var(--mono); letter-spacing: 0.18em;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--line-strong);
+    padding: 4px 8px; border-radius: 6px; color: var(--text);
+  }
+
+  /* ---------- smart ---------- */
+  .smart { background: linear-gradient(180deg, transparent, rgba(229, 9, 20, 0.05) 30%, transparent); }
+  .model-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 26px; }
+  .model {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 9px 16px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--line);
+    font-size: 14px; color: var(--text-2);
+  }
+  .model b { color: var(--text); }
+  .tag {
+    display: inline-block; margin-top: 16px; font: 600 11px/1 var(--font); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-3); border: 1px solid var(--line); padding: 6px 9px; border-radius: 999px;
+  }
+  .card.feature-wide { grid-column: span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: center; }
+  .search-demo {
+    background: #0e0e10; border: 1px solid var(--line-strong); border-radius: 14px; padding: 16px;
+    font-size: 14px;
+  }
+  .search-demo .q { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; background: #1b1b1f; color: var(--text); }
+  .search-demo .q svg { width: 16px; height: 16px; color: var(--text-3); }
+  .search-demo .q .caret { width: 2px; height: 18px; background: var(--red-hot); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .search-demo .understood { margin-top: 14px; color: var(--red-hot); font: 700 11px/1 var(--font); letter-spacing: .1em; text-transform: uppercase; display: flex; gap: 8px; align-items: center; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chips span { padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--text-2); font-size: 13px; }
+
+  /* ---------- playback ---------- */
+  .pb-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .pb { background: var(--bg-raised); padding: 26px 28px; }
+  .pb h3 { font: 700 17px/1.3 var(--font); display: flex; align-items: center; gap: 10px; }
+  .pb h3 .mini { width: 8px; height: 8px; border-radius: 2px; background: var(--red); flex: none; }
+  .pb p { margin: 8px 0 0; color: var(--text-2); font-size: 15px; }
+
+  /* ---------- architecture ---------- */
+  .arch { background: var(--bg-raised); border-block: 1px solid var(--line); }
+  .diagram { background: #0e0e10; border: 1px solid var(--line); border-radius: var(--radius); padding: clamp(16px, 3vw, 32px); }
+  .diagram { overflow-x: auto; }
+  .diagram svg { width: 100%; min-width: 680px; height: auto; display: block; }
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 28px; }
+  .flow .card { padding: 22px; }
+  .flow .card h3 { margin-top: 10px; font-size: 16px; }
+  .flow .num { font: 400 30px/1 var(--display); color: var(--red-hot); }
+
+  /* ---------- privacy ---------- */
+  .privacy .card { padding: 26px; }
+  .privacy .card h3 { margin-top: 14px; font-size: 17px; }
+
+  /* ---------- stack ---------- */
+  .stack { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  .stack span {
+    padding: 10px 16px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--line);
+    font-size: 14px; color: var(--text-2); font-weight: 500;
+  }
+  .stack span b { color: var(--text); font-weight: 600; }
+
+  /* ---------- get started ---------- */
+  .tabs { display: flex; gap: 6px; padding: 5px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; width: fit-content; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button {
+    all: unset; cursor: pointer; padding: 9px 16px; border-radius: 8px; font: 600 14px/1 var(--font); color: var(--text-2);
+  }
+  .tabs button[aria-selected="true"] { background: rgba(255,255,255,0.08); color: var(--text); }
+  .tabs button:focus-visible { outline: 2px solid var(--red-hot); outline-offset: 2px; }
+  .term { background: #0e0e10; border: 1px solid var(--line-strong); border-radius: 14px; overflow: hidden; }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2c2c30; }
+  .term-bar span { margin-left: 10px; font: 500 12px/1 var(--mono); color: var(--text-3); }
+  .term pre { margin: 0; padding: 20px 22px; overflow-x: auto; font: 400 14px/1.75 var(--mono); color: #dcdce2; }
+  .term .c { color: #6b6b75; }
+  .term .p { color: var(--red-hot); user-select: none; }
+  .panel[hidden] { display: none; }
+  .note { margin-top: 14px; color: var(--text-3); font-size: 14px; }
+
+  /* ---------- CTA + footer ---------- */
+  .cta {
+    text-align: center; border-radius: 26px; padding: clamp(44px, 7vw, 80px) 24px;
+    background: radial-gradient(70% 90% at 50% 0%, rgba(229, 9, 20, 0.35), transparent 70%), var(--bg-card);
+    border: 1px solid var(--line-strong);
+  }
+  .cta .wordmark { font-size: clamp(56px, 9vw, 104px); display: block; }
+  .cta p { color: var(--text-2); margin: 10px auto 0; max-width: 520px; }
+  .cta .hero-cta { margin-top: 28px; }
+  footer { border-top: 1px solid var(--line); padding: 40px 0 56px; color: var(--text-3); font-size: 13px; }
+  footer .wrap { display: grid; gap: 18px; }
+  footer .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  footer .wordmark { font-size: 26px; }
+  footer a:hover { color: var(--text); }
+  footer .links { display: flex; gap: 22px; }
+
+  /* ---------- reveal ---------- */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .search-demo .q .caret { animation: none; }
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 980px) {
+    .grid-3 { grid-template-columns: repeat(2, 1fr); }
+    .card.feature-wide { grid-column: span 2; }
+    .flow { grid-template-columns: repeat(2, 1fr); }
+    .nav-links { display: none; }
+  }
+  @media (max-width: 760px) {
+    .grid-2, .grid-3, .split, .pb-list, .flow { grid-template-columns: 1fr; }
+    .card.feature-wide { grid-column: auto; grid-template-columns: 1fr; }
+    .stats .wrap { grid-template-columns: repeat(2, 1fr); }
+    .stat:nth-child(3) { border-left: 0; }
+    .stat:nth-child(n+3) { border-top: 1px solid var(--line); }
+    .tv { width: 100%; }
+    .phone { width: 30%; right: -2%; bottom: -8px; border-radius: 22px; padding: 5px; }
+    .phone img { border-radius: 18px; }
+    .sync-chip { display: none; }
+    .stage { padding-bottom: 28px; }
+    .nav .btn-sm span { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a href="#top" class="wordmark" aria-label="NUCFLIX home">NUCFLIX</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#apps">Apps</a>
+      <a href="#household">Household</a>
+      <a href="#smart">Smart features</a>
+      <a href="#how">How it works</a>
+      <a href="#start">Get started</a>
+    </nav>
+    <a class="btn btn-ghost btn-sm" href="https://github.com/pri-te-sh/NUCFLIX">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+      <span>View on GitHub</span>
+    </a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ===================== HERO ===================== -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-copy">
+        <span class="pill"><b>NEW</b> AI end-credit detection, Skip Intro and smart search</span>
+        <h1>Your IPTV,<br>the <span class="accent">streaming-app</span> way.</h1>
+        <p class="lede">NUCFLIX turns any Xtream Codes subscription into a cinematic experience on iPhone and Fire TV. Big artwork, a profile for everyone, and Continue Watching that follows you from the couch to your phone.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+            View the source
+          </a>
+          <a class="btn btn-ghost" href="#how">See how it works</a>
+        </div>
+        <p class="hero-meta">iOS 17+ &nbsp;·&nbsp; Fire TV (Android 8+) &nbsp;·&nbsp; MIT licensed &nbsp;·&nbsp; Bring your own IPTV line</p>
+      </div>
+
+      <div class="stage reveal" aria-hidden="true">
+        <div class="tv"><img src="images/tv-whos-watching.png" alt="" width="1280" height="720"></div>
+        <div class="phone"><img src="images/ios-whos-watching.png" alt="" width="540" height="985"></div>
+        <div class="sync-chip"><span class="dot"></span><div>Synced with Living Room TV<small>Profiles · My List · Continue Watching</small></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== STATS ===================== -->
+  <section class="stats" aria-label="At a glance">
+    <div class="wrap">
+      <div class="stat"><strong>2</strong><span>native apps, iPhone &amp; Fire TV</span></div>
+      <div class="stat"><strong>1</strong><span>household account across both</span></div>
+      <div class="stat"><strong>5</strong><span>AI features, on Ollama Cloud</span></div>
+      <div class="stat"><strong>0</strong><span>provider logins saved on devices</span></div>
+    </div>
+  </section>
+
+  <!-- ===================== APPS ===================== -->
+  <section id="apps">
+    <div class="wrap">
+      <div class="section-head center reveal">
+        <span class="eyebrow">Two apps, one experience</span>
+        <h2>Built natively for every screen in your home.</h2>
+        <p class="lede">A SwiftUI app for your pocket and a 10-foot app for your TV, sharing the same people, lists and progress.</p>
+      </div>
+
+      <div class="grid grid-2">
+        <article class="card platform reveal">
+          <div class="platform-head">
+            <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10.5 18.5h3"/></svg></div>
+            <div><h3>iPhone</h3><p>SwiftUI · MobileVLCKit · AVKit</p></div>
+          </div>
+          <ul class="checks">
+            <li><span><b>Live TV, Movies and Series</b> with a full TV guide (EPG)</span></li>
+            <li><span><b>Plays almost anything:</b> MKV, TS, HLS, DTS, multi-audio and subtitles</span></li>
+            <li><span><b>Smart Downloads</b> that pause while anyone streams and tidy up watched episodes</span></li>
+            <li><span><b>AirPlay and Picture-in-Picture</b>, including remuxed casting of MKV files</span></li>
+            <li><span><b>Account hub:</b> Google or email sign-in, people, kids profiles, lines and TV pairing</span></li>
+          </ul>
+        </article>
+
+        <article class="card platform reveal">
+          <div class="platform-head">
+            <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+            <div><h3>Fire TV</h3><p>Media3 ExoPlayer · WebView UI · FFmpeg</p></div>
+          </div>
+          <ul class="checks">
+            <li><span><b>A 10-foot interface</b> designed for the remote at 1920×1080</span></li>
+            <li><span><b>Native ExoPlayer playback</b> with timeline scrubbing and thumbnail previews</span></li>
+            <li><span><b>DTS and Dolby TrueHD audio</b> through a built-in LGPL FFmpeg decoder</span></li>
+            <li><span><b>Self-healing streams:</b> repairs broken MPEG-TS clocks and MKV headers</span></li>
+            <li><span><b>Search from your phone</b> with the built-in phone helper</span></li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== HOUSEHOLD ===================== -->
+  <section id="household" style="padding-top: 0">
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow">One account, every screen</span>
+        <h2>Profiles are people. Your TV joins in seconds.</h2>
+        <p class="lede">Everyone in the house gets their own My List, Continue Watching and recommendations. Your IPTV line is stored once, in the account, and shared by the whole household.</p>
+        <div class="steps">
+          <div class="step"><div><h3>Sign in on your iPhone</h3><p>Add your IPTV line and the people who watch with you, including kids profiles.</p></div></div>
+          <div class="step"><div><h3>Open NUCFLIX on the TV</h3><p>It shows a short-lived pairing code such as <span class="code-chip">PXG7 U9GB</span>.</p></div></div>
+          <div class="step"><div><h3>Type the code on your phone</h3><p>The TV joins your household and asks <em>Who's watching?</em> Start on the phone, finish on the TV.</p></div></div>
+        </div>
+      </div>
+      <img class="shot reveal" src="images/tv-pairing.png" alt="The Fire TV pairing screen showing an 8-character code" width="1280" height="720" loading="lazy">
+    </div>
+  </section>
+
+  <!-- ===================== SMART ===================== -->
+  <section id="smart" class="smart">
+    <div class="wrap">
+      <div class="section-head center reveal">
+        <span class="eyebrow">Smart features</span>
+        <h2>A little AI, exactly where it helps.</h2>
+        <p class="lede">Vision and language models run behind Firebase Cloud Functions, so the apps never hold an API key. Every feature falls back gracefully if the AI is unavailable.</p>
+        <div class="model-row">
+          <span class="model"><b>Clef</b> decision model that reads video frames</span>
+          <span class="model"><b>Gemma 4</b> understands search in plain language</span>
+        </div>
+      </div>
+
+      <div class="grid grid-3">
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8z"/><path d="M19 5v14"/></svg></div>
+          <h3>Next episode when the credits really start</h3>
+          <p>Frames near the end are checked for end credits, so the countdown appears at the right moment, not a fixed 25 seconds before the end.</p>
+          <span class="tag">Vision · Clef</span>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l7 7-7 7"/><path d="M13 5l7 7-7 7"/></svg></div>
+          <h3>Skip Intro</h3>
+          <p>The first person to watch a show's opening finds where the titles begin and end. Everyone in the household gets the button after that.</p>
+          <span class="tag">Vision · shared markers</span>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8"/><path d="M9.5 9.5l5 3M14.5 9.5l-5 3"/></svg></div>
+          <h3>Dead channel check</h3>
+          <p>A black, frozen or "no signal" picture is spotted within seconds, with a one-tap switch to the same station in another quality.</p>
+          <span class="tag">Vision · two frames</span>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.2-3 7.7-7 9-4-1.3-7-4.8-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+          <h3>Kid-safe categories</h3>
+          <p>Every provider category is tagged for kids, adult content, language and genre. Kids profiles only see what suits them.</p>
+          <span class="tag">Decisions · Clef</span>
+        </article>
+        <article class="card feature-wide reveal">
+          <div>
+            <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/><path d="M11 8v6M8 11h6"/></svg></div>
+            <h3>Smart search</h3>
+            <p>Ask the way you'd ask a friend. NUCFLIX turns the request into filters for genre, language, years and sort order.</p>
+            <span class="tag">Language · Gemma 4</span>
+          </div>
+          <div class="search-demo" aria-hidden="true">
+            <div class="q"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>funny hindi movies from the 2010s<span class="caret"></span></div>
+            <div class="understood">✦ Hindi comedy movies, 2010–2019</div>
+            <div class="chips"><span>kind: movies</span><span>genre: comedy</span><span>language: Hindi</span><span>years: 2010–2019</span></div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PLAYBACK ===================== -->
+  <section id="playback">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">Under the hood</span>
+        <h2>Engineered for messy real-world streams.</h2>
+        <p class="lede">IPTV providers cut corners. NUCFLIX quietly works around them so the picture starts, the sound plays and your line is never double-booked.</p>
+      </div>
+      <div class="pb-list reveal">
+        <div class="pb"><h3><span class="mini"></span>One stream at a time, respected</h3><p>Downloads pause the moment anyone in the household starts watching, then resume exactly where they stopped.</p></div>
+        <div class="pb"><h3><span class="mini"></span>Watched episodes clean themselves up</h3><p>A downloaded episode is removed once it's been watched on any device, freeing space automatically.</p></div>
+        <div class="pb"><h3><span class="mini"></span>Audio the Fire TV can't decode</h3><p>DTS and Dolby TrueHD tracks fall back to a bundled FFmpeg decoder instead of playing silently.</p></div>
+        <div class="pb"><h3><span class="mini"></span>Repairs broken files and feeds</h3><p>Rebuilds missing H.264 headers in MKVs and re-bases live TS feeds whose audio drifts hours from the video.</p></div>
+        <div class="pb"><h3><span class="mini"></span>Resilient on flaky lines</h3><p>Smart retries for busy single-connection lines, stall recovery for live TV and resumable, piece-by-piece downloads.</p></div>
+        <div class="pb"><h3><span class="mini"></span>Fast on modest hardware</h3><p>A locally cached catalog, pre-rendered rows and an R8-shrunk build keep a Fire TV stick responsive with tens of thousands of titles.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== ARCHITECTURE ===================== -->
+  <section id="how" class="arch">
+    <div class="wrap">
+      <div class="section-head center reveal">
+        <span class="eyebrow">How it works</span>
+        <h2>Firebase in the middle. Your provider stays yours.</h2>
+        <p class="lede">The apps sync through Firestore and call Cloud Functions for AI. Video always streams straight from your IPTV provider to the device.</p>
+      </div>
+
+      <div class="diagram reveal" role="img" aria-label="Architecture: the iPhone app and Fire TV app sync through Firebase (Auth, Firestore, Cloud Functions). Cloud Functions call Ollama Cloud. Both apps stream directly from the IPTV provider.">
+        <svg viewBox="0 -24 1000 464" xmlns="http://www.w3.org/2000/svg" font-family="Inter, system-ui, sans-serif">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7d7d86"/></marker>
+            <marker id="arR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ff2a35"/></marker>
+            <linearGradient id="fb" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#2a1214"/><stop offset="1" stop-color="#1a0c0d"/></linearGradient>
+          </defs>
+
+          <!-- devices -->
+          <g>
+            <rect x="20" y="60" width="210" height="110" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
+            <text x="125" y="104" text-anchor="middle" fill="#f4f4f5" font-size="20" font-weight="700">iPhone app</text>
+            <text x="125" y="132" text-anchor="middle" fill="#7d7d86" font-size="14">Google / email sign-in</text>
+            <text x="125" y="152" text-anchor="middle" fill="#7d7d86" font-size="14">household owner</text>
+          </g>
+          <g>
+            <rect x="20" y="270" width="210" height="110" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
+            <text x="125" y="314" text-anchor="middle" fill="#f4f4f5" font-size="20" font-weight="700">Fire TV app</text>
+            <text x="125" y="342" text-anchor="middle" fill="#7d7d86" font-size="14">anonymous + pairing code</text>
+            <text x="125" y="362" text-anchor="middle" fill="#7d7d86" font-size="14">household member</text>
+          </g>
+
+          <!-- firebase -->
+          <g>
+            <rect x="380" y="40" width="260" height="360" rx="20" fill="url(#fb)" stroke="rgba(229,9,20,.45)"/>
+            <text x="510" y="78" text-anchor="middle" fill="#ff2a35" font-size="14" font-weight="700" letter-spacing="2">FIREBASE</text>
+            <rect x="405" y="98" width="210" height="74" rx="12" fill="#17171a" stroke="rgba(255,255,255,.1)"/>
+            <text x="510" y="130" text-anchor="middle" fill="#f4f4f5" font-size="16" font-weight="600">Auth</text>
+            <text x="510" y="152" text-anchor="middle" fill="#7d7d86" font-size="13">owner + paired TVs</text>
+            <rect x="405" y="184" width="210" height="96" rx="12" fill="#17171a" stroke="rgba(255,255,255,.1)"/>
+            <text x="510" y="214" text-anchor="middle" fill="#f4f4f5" font-size="16" font-weight="600">Firestore</text>
+            <text x="510" y="236" text-anchor="middle" fill="#7d7d86" font-size="13">profiles · lines · My List</text>
+            <text x="510" y="256" text-anchor="middle" fill="#7d7d86" font-size="13">progress · markers · tags</text>
+            <rect x="405" y="292" width="210" height="88" rx="12" fill="#17171a" stroke="rgba(255,255,255,.1)"/>
+            <text x="510" y="324" text-anchor="middle" fill="#f4f4f5" font-size="16" font-weight="600">Cloud Functions</text>
+            <text x="510" y="346" text-anchor="middle" fill="#7d7d86" font-size="13">frameCheck · classify</text>
+            <text x="510" y="364" text-anchor="middle" fill="#7d7d86" font-size="13">smartSearch · daily limits</text>
+          </g>
+
+          <!-- ollama + provider -->
+          <g>
+            <rect x="770" y="292" width="210" height="88" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
+            <text x="875" y="328" text-anchor="middle" fill="#f4f4f5" font-size="18" font-weight="700">Ollama Cloud</text>
+            <text x="875" y="352" text-anchor="middle" fill="#7d7d86" font-size="13">Clef · Gemma 4</text>
+          </g>
+          <g>
+            <rect x="770" y="60" width="210" height="110" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
+            <text x="875" y="104" text-anchor="middle" fill="#f4f4f5" font-size="18" font-weight="700">IPTV provider</text>
+            <text x="875" y="130" text-anchor="middle" fill="#7d7d86" font-size="13">your Xtream Codes line</text>
+            <text x="875" y="150" text-anchor="middle" fill="#7d7d86" font-size="13">(not part of NUCFLIX)</text>
+          </g>
+
+          <!-- sync arrows -->
+          <path d="M232 110 L398 140" stroke="#7d7d86" stroke-width="2" fill="none" marker-end="url(#ar)" marker-start="url(#ar)"/>
+          <path d="M232 320 L398 236" stroke="#7d7d86" stroke-width="2" fill="none" marker-end="url(#ar)" marker-start="url(#ar)"/>
+          <text x="300" y="104" fill="#b4b4bb" font-size="13" transform="rotate(10 300 104)">sync live</text>
+          <text x="292" y="262" fill="#b4b4bb" font-size="13" transform="rotate(-27 292 262)">sync live</text>
+          <path d="M617 336 L766 336" stroke="#7d7d86" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+          <text x="690" y="324" text-anchor="middle" fill="#b4b4bb" font-size="13">API key stays here</text>
+
+          <!-- streams -->
+          <!-- streams: one bus above everything, straight between each device and the provider -->
+          <path d="M125 56 V18 H875 V56" stroke="#ff2a35" stroke-width="2.4" stroke-dasharray="7 6" fill="none" marker-end="url(#arR)" marker-start="url(#arR)"/>
+          <path d="M60 18 H6 V325 H16" stroke="#ff2a35" stroke-width="2.4" stroke-dasharray="7 6" fill="none" marker-end="url(#arR)"/>
+          <rect x="330" y="-2" width="340" height="40" fill="#0e0e10"/>
+          <text x="500" y="23" text-anchor="middle" fill="#ff2a35" font-size="14" font-weight="600">video streams directly, device ↔ provider</text>
+        </svg>
+      </div>
+
+      <div class="flow">
+        <div class="card reveal"><span class="num">01</span><h3>Sign in</h3><p>The iPhone owns the household: lines, people and paired TVs.</p></div>
+        <div class="card reveal"><span class="num">02</span><h3>Pair</h3><p>The TV signs in anonymously and joins with a short-lived code.</p></div>
+        <div class="card reveal"><span class="num">03</span><h3>Watch</h3><p>Logins live in memory only; favorites and progress sync live.</p></div>
+        <div class="card reveal"><span class="num">04</span><h3>Get smarter</h3><p>Credits, intros and tags are found once and shared by everyone.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PRIVACY ===================== -->
+  <section id="privacy" class="privacy">
+    <div class="wrap">
+      <div class="section-head center reveal">
+        <span class="eyebrow">Privacy &amp; security</span>
+        <h2>Private by design.</h2>
+        <p class="lede">Your provider login and your household's data are locked down at every layer.</p>
+      </div>
+      <div class="grid grid-3">
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+          <h3>Logins never touch the disk</h3>
+          <p>IPTV credentials live in your account and only in memory on devices. Downloads store placeholders, not passwords.</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.2-3 7.7-7 9-4-1.3-7-4.8-7-9V6z"/></svg></div>
+          <h3>Locked-down rules, tested</h3>
+          <p>Firestore rules let only you and your paired TVs into the household, and TVs can't change lines or profiles. Emulator tests cover every rule.</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg></div>
+          <h3>AI that sees only what it needs</h3>
+          <p>Small frames, category names and search text. Never your login, profiles or history, and frames are never stored.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== STACK ===================== -->
+  <section id="stack" style="padding-top: 0">
+    <div class="wrap">
+      <div class="section-head center reveal">
+        <span class="eyebrow">Tech stack</span>
+        <h2>Modern and native, end to end.</h2>
+      </div>
+      <div class="stack reveal">
+        <span><b>Swift</b> · SwiftUI</span>
+        <span><b>MobileVLCKit</b></span>
+        <span><b>AVKit</b> · AirPlay · PiP</span>
+        <span><b>Media3</b> ExoPlayer 1.10</span>
+        <span><b>FFmpeg</b> 6.1 (LGPL)</span>
+        <span><b>Java</b> · WebView UI</span>
+        <span><b>Firebase</b> Auth · Firestore</span>
+        <span><b>Cloud Functions</b> · Node 22</span>
+        <span><b>Ollama Cloud</b> Clef · Gemma 4</span>
+        <span><b>R8</b> · Gradle-less build</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GET STARTED ===================== -->
+  <section id="start" style="padding-top: 0">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">Get started</span>
+        <h2>Up and running in four steps.</h2>
+        <p class="lede">You'll need a Firebase project with Authentication and Firestore. The AI features additionally need the Blaze plan and an Ollama API key; without them everything else still works.</p>
+      </div>
+
+      <div class="reveal">
+        <div class="tabs" role="tablist" aria-label="Setup steps">
+          <button role="tab" aria-selected="true" aria-controls="p1" id="t1">1 · Firebase</button>
+          <button role="tab" aria-selected="false" aria-controls="p2" id="t2">2 · AI functions</button>
+          <button role="tab" aria-selected="false" aria-controls="p3" id="t3">3 · iPhone</button>
+          <button role="tab" aria-selected="false" aria-controls="p4" id="t4">4 · Fire TV</button>
+        </div>
+
+        <div class="panel" id="p1" role="tabpanel" aria-labelledby="t1">
+          <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>firebase/</span></div>
+<pre><span class="p">$ </span>cd firebase && npm install
+<span class="p">$ </span>npm test               <span class="c"># security-rules tests on the local emulators</span>
+<span class="p">$ </span>npm run deploy:rules   <span class="c"># deploy once they pass</span></pre></div>
+        </div>
+        <div class="panel" id="p2" role="tabpanel" aria-labelledby="t2" hidden>
+          <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>firebase/</span></div>
+<pre><span class="p">$ </span>cd functions && npm install && cd ..
+<span class="p">$ </span>npx firebase functions:secrets:set OLLAMA_API_KEY   <span class="c"># stored in Secret Manager</span>
+<span class="p">$ </span>npm run test:functions                               <span class="c"># fake AI, no key needed</span>
+<span class="p">$ </span>npm run deploy:functions</pre></div>
+          <p class="note">Each household gets 4,000 AI calls a day. Normal viewing uses a few dozen.</p>
+        </div>
+        <div class="panel" id="p3" role="tabpanel" aria-labelledby="t3" hidden>
+          <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>repository root</span></div>
+<pre><span class="p">$ </span>./scripts/fetch-vlckit.sh   <span class="c"># downloads MobileVLCKit, kept out of git</span>
+<span class="p">$ </span>open NucFlix.xcodeproj      <span class="c"># pick your team, run on your iPhone</span></pre></div>
+          <p class="note">Changing the bundle ID? Register it in Firebase and replace <code>GoogleService-Info.plist</code>.</p>
+        </div>
+        <div class="panel" id="p4" role="tabpanel" aria-labelledby="t4" hidden>
+          <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>NucFlixFireTV/</span></div>
+<pre><span class="p">$ </span>./build.sh                    <span class="c"># aapt2 → javac → R8 → zipalign → apksigner</span>
+<span class="p">$ </span>./build.sh --install          <span class="c"># build, install and launch on your Fire TV</span>
+<span class="p">$ </span>./build.sh --debug --install  <span class="c"># debuggable WebView for chrome://inspect</span></pre></div>
+          <p class="note">No Gradle needed. Back up <code>keystore.jks</code> and <code>local.properties</code> together.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== CTA ===================== -->
+  <section style="padding-top: 0">
+    <div class="wrap">
+      <div class="cta reveal">
+        <span class="wordmark">NUCFLIX</span>
+        <p>Made for the couch. Released under the MIT license.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX">Explore the repository</a>
+          <a class="btn btn-ghost" href="https://github.com/pri-te-sh/NUCFLIX#readme">Read the docs</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <span class="wordmark">NUCFLIX</span>
+      <nav class="links" aria-label="Footer">
+        <a href="https://github.com/pri-te-sh/NUCFLIX">GitHub</a>
+        <a href="https://github.com/pri-te-sh/NUCFLIX/blob/main/LICENSE">License</a>
+        <a href="#privacy">Privacy</a>
+      </nav>
+    </div>
+    <p style="margin:0">NUCFLIX is a player. It doesn't include, host or sell any channels or content; use it only with IPTV services you're entitled to. It isn't affiliated with or endorsed by Netflix, Amazon, Apple or Google, and all trademarks belong to their owners. © 2026 pri-te-sh · MIT License.</p>
+  </div>
+</footer>
+
+<script>
+  // Sticky nav border once the page scrolls.
+  const nav = document.getElementById('nav');
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // Fade sections in as they arrive.
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { rootMargin: '0px 0px -8% 0px' }) : null;
+  document.querySelectorAll('.reveal').forEach(el => io ? io.observe(el) : el.classList.add('in'));
+
+  // Setup tabs.
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => select(i));
+    tab.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight') select((i + 1) % tabs.length, true);
+      if (e.key === 'ArrowLeft') select((i - 1 + tabs.length) % tabs.length, true);
+    });
+  });
+  function select(i, focus) {
+    tabs.forEach((t, j) => {
+      t.setAttribute('aria-selected', String(i === j));
+      t.tabIndex = i === j ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = i !== j;
+    });
+    if (focus) tabs[i].focus();
+  }
+  select(0);
+</script>
+</body>
+</html>
