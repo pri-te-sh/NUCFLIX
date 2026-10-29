@@ -18,6 +18,7 @@ import android.view.PixelCopy;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.SurfaceHolder;
+import android.view.Surface;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
@@ -61,6 +62,11 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy;
 import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.extractor.Extractor;
+import androidx.media3.extractor.ExtractorsFactory;
+import androidx.media3.extractor.mkv.MatroskaExtractor;
+import androidx.media3.extractor.mkv.NucMatroskaExtractor;
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory;
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory;
 
 import org.json.JSONArray;
@@ -75,7 +81,11 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * NucFlix for Fire TV:
@@ -392,10 +402,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     // ------------------------------------------------------------------ ExoPlayer (Media3)
 
+    // The player gets the bare Surface, not the holder: with the holder ExoPlayer adds its own surface
+    // callbacks, which run on the main thread while the player lives on its own thread, and pressing Home
+    // mid-playback crashed the app ("Exception configuring surface", then IllegalStateException).
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
+        Surface surface = holder.getSurface();
         player.post(() -> {
-            if (exo != null) exo.setVideoSurfaceHolder(holder);
+            if (exo != null) exo.setVideoSurface(surface);
         });
     }
 
@@ -405,9 +419,18 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
+        // The surface must be released before this returns, so wait (briefly) for the player thread.
+        Surface surface = holder.getSurface();
+        CountDownLatch released = new CountDownLatch(1);
         player.post(() -> {
-            if (exo != null) exo.clearVideoSurfaceHolder(holder);
+            if (exo != null) exo.clearVideoSurface(surface);
+            released.countDown();
         });
+        try {
+            released.await(500, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     // The methods below run on the player thread (ExoPlayer's application looper).
@@ -434,7 +457,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                 .build(), false);
         exo.addListener(new ExoListener());
-        if (videoSurface != null) exo.setVideoSurfaceHolder(videoSurface.getHolder());
+        if (videoSurface != null && videoSurface.getHolder().getSurface().isValid()) {
+            exo.setVideoSurface(videoSurface.getHolder().getSurface());
+        }
         return exo;
     }
 
@@ -506,9 +531,37 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 .setConstantBitrateSeekingEnabled(true);
         // Live TS goes through the timestamp re-baser (repairs feeds with audio hours off the video clock).
         DataSource.Factory source = isLive() ? () -> new TsRebaseDataSource(http.createDataSource()) : http;
-        return new ProgressiveMediaSource.Factory(source, extractors)
+        return new ProgressiveMediaSource.Factory(source, withMkvRepair(extractors))
                 .setLoadErrorHandlingPolicy(RETRY_POLICY)
                 .createMediaSource(item);
+    }
+
+    /**
+     * Some providers' MKVs leave out the H.264 CodecPrivate (decoder setup) that ExoPlayer's MKV parser
+     * insists on; VLC and Android's own player recover it from the stream. NucMatroskaExtractor does too.
+     */
+    private static ExtractorsFactory withMkvRepair(DefaultExtractorsFactory defaults) {
+        return new ExtractorsFactory() {
+            @Override
+            public Extractor[] createExtractors() {
+                return swapMkv(defaults.createExtractors());
+            }
+
+            @Override
+            public Extractor[] createExtractors(Uri uri, Map<String, List<String>> responseHeaders) {
+                return swapMkv(defaults.createExtractors(uri, responseHeaders));
+            }
+        };
+    }
+
+    private static Extractor[] swapMkv(Extractor[] extractors) {
+        for (int i = 0; i < extractors.length; i++) {
+            if (extractors[i] instanceof MatroskaExtractor) {
+                // Same settings DefaultExtractorsFactory uses (subtitles transcoded, no flags).
+                extractors[i] = new NucMatroskaExtractor(new DefaultSubtitleParserFactory(), 0);
+            }
+        }
+        return extractors;
     }
 
     /**
@@ -612,6 +665,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 return "This Fire TV can't decode this stream's video or audio format.";
             case PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED:
                 return "This stream's container format isn't supported.";
+            case PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED:
+                return isLive() ? "This channel is sending damaged video right now."
+                        : "The provider's file for this title is damaged, so the TV can't play it. It may still play in the NucFlix iPhone app.";
             case PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED:
             case PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT:
                 return "Couldn't reach the provider's stream server.";
@@ -658,7 +714,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         @Override
         public void onPlayerError(PlaybackException error) {
             if (currentVideoUrl == null) return;
-            if (retryable(error)) retryOrFail(friendlyError(error));
+            // A damaged file stays damaged: only live feeds (which glitch and recover) retry that.
+            boolean brokenFile = !isLive() && error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED;
+            if (retryable(error) && !brokenFile) retryOrFail(friendlyError(error));
             else fail(friendlyError(error));
         }
 
