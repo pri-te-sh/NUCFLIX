@@ -386,7 +386,97 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         }
     }
     private var concurrencyLimit: Int {
-        min(maxConcurrentDownloads, max(1, lineMaxConnections ?? Self.maxConcurrentDownloadsLimit))
+        let lineSlots = max(1, lineMaxConnections ?? Self.maxConcurrentDownloadsLimit)
+        // Streams come first. With an unknown limit, assume the line is full while anyone watches.
+        let free = streamsInUse == 0 ? lineSlots : (lineMaxConnections == nil ? 0 : max(0, lineSlots - streamsInUse))
+        return min(maxConcurrentDownloads, free)
+    }
+
+    // MARK: Streams on the line
+
+    /// Streams pulling from the line right now: this iPhone's player and other devices in the household
+    /// (see `StreamPresence`). Each uses one of the line's connections, so downloads only get what's left;
+    /// on a 1-connection line they pause while anyone watches and resume when they stop.
+    private(set) var streamsInUse = 0
+    /// Who is watching, for "Paused while Living Room TV is watching".
+    private(set) var watchingDeviceNames: [String] = []
+    /// A fresh "how many streams are on the line?" answer, for when iOS wakes the app in the background
+    /// (the live listener isn't running then).
+    @ObservationIgnored var streamCheck: (() async -> (count: Int, names: [String]))?
+    var isPausedForStreaming: Bool { streamsInUse > 0 && concurrencyLimit == 0 && hasPendingDownloads }
+
+    /// A tiny delayed request on the background session. Its completion wakes the app to check whether
+    /// the line is free again, since nothing else would while downloads are parked in the background.
+    static let streamProbeID = "nucflix.stream-probe"
+    private static let streamProbeURL = URL(string: "https://www.gstatic.com/generate_204")!
+    private static let streamProbeDelay: TimeInterval = 120
+    @ObservationIgnored private var streamProbePending = false
+
+    /// Main thread.
+    func setStreamsInUse(_ count: Int, deviceNames: [String]) {
+        if watchingDeviceNames != deviceNames { watchingDeviceNames = deviceNames }
+        if count != streamsInUse {
+            streamsInUse = count
+            enforceConcurrencyLimit()
+            advanceQueueIfNeeded()
+            persistStateNow()
+        }
+        scheduleStreamProbeIfNeeded()
+    }
+
+    private func scheduleStreamProbeIfNeeded() {
+        guard isPausedForStreaming, !streamProbePending,
+              UIApplication.shared.applicationState != .active else { return }
+        streamProbePending = true
+        var request = URLRequest(url: Self.streamProbeURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let task = backgroundSession.downloadTask(with: request)
+        task.taskDescription = Self.streamProbeID
+        task.earliestBeginDate = Date().addingTimeInterval(Self.streamProbeDelay)
+        task.countOfBytesClientExpectsToSend = 300
+        task.countOfBytesClientExpectsToReceive = 600
+        task.resume()
+    }
+
+    /// Main thread. The probe came back: ask again whether anyone is still watching.
+    private func streamProbeFinished() {
+        streamProbePending = false
+        guard hasPendingDownloads else { return }
+        checkStreamsThen { }
+    }
+
+    /// Runs a fresh stream check under a short background assertion (the app may only be awake for
+    /// seconds), applies it, then calls `then`. Without a checker it applies nothing.
+    private func checkStreamsThen(_ then: @escaping () -> Void) {
+        guard let streamCheck else {
+            then()
+            return
+        }
+        let assertion = UIApplication.shared.beginBackgroundTask(withName: "NucFlixStreamCheck")
+        Task { @MainActor in
+            let streams = await streamCheck()
+            self.setStreamsInUse(streams.count, deviceNames: streams.names)
+            then()
+            if assertion != .invalid { UIApplication.shared.endBackgroundTask(assertion) }
+        }
+    }
+
+    /// Between pieces the line is free for a moment. In the foreground the live stream count is current;
+    /// in the background nothing has told us about a stream that started since, so check first.
+    private func continueWithNextPiece(_ item: ActiveDownloadItem) {
+        let startIfAllowed = { [weak self] in
+            guard let self, let current = self.activeDownloads[item.id], self.downloadTasks[item.id] == nil else { return }
+            if self.activeDownloads.count > self.concurrencyLimit {
+                self.enforceConcurrencyLimit()
+            } else {
+                self.beginDownload(active: current, clearsFailure: false)
+            }
+        }
+        if UIApplication.shared.applicationState == .active {
+            startIfAllowed()
+        } else {
+            checkStreamsThen(startIfAllowed)
+        }
     }
     /// Provider answers that mean "this line has no free connection right now" (or rate limiting).
     private static let busyStatusCodes: Set<Int> = [429, 458, 503, 509, 884]
@@ -405,6 +495,11 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             UserDefaults.standard.set(keepAwakeWhileDownloading, forKey: "nucflix.keepAwakeWhileDownloading")
             updateScreenAwake()
         }
+    }
+
+    /// Smart Downloads: remove a downloaded episode once it's been watched (on any device) after downloading.
+    var deleteWatchedEpisodes: Bool = UserDefaults.standard.object(forKey: "nucflix.deleteWatchedEpisodes") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(deleteWatchedEpisodes, forKey: "nucflix.deleteWatchedEpisodes") }
     }
 
     var hasPendingDownloads: Bool { !activeDownloads.isEmpty || !queuedDownloads.isEmpty }
@@ -670,6 +765,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                 task.cancel()
                 continue
             }
+            if itemID == Self.streamProbeID {
+                streamProbePending = true
+                continue
+            }
             let key = DownloadTaskKey(kind: .background, task: task)
             if handoffCancelledTaskKeys.contains(key) { continue }
             // A queued item that somehow still has a live transfer gets promoted back to active.
@@ -866,6 +965,8 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             queue: .main
         ) { [weak self] _ in
             self?.handOffForegroundTasksToBackground()
+            // The live stream listener stops once suspended: make sure something wakes us to resume.
+            self?.scheduleStreamProbeIfNeeded()
         }
         center.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
@@ -1619,7 +1720,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             return
         }
         progressThrottleTimes[throttleKey] = now
-        guard let itemID = downloadTask.taskDescription else { return }
+        guard let itemID = downloadTask.taskDescription, itemID != Self.streamProbeID else { return }
 
         DispatchQueue.main.async { [weak self] in
             self?.applyProgress(
@@ -1640,7 +1741,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     ) {
         // Publish the resumed offset immediately so progress stays continuous across handoffs.
         let kind = DownloadSessionKind(session: session)
-        guard let itemID = downloadTask.taskDescription else { return }
+        guard let itemID = downloadTask.taskDescription, itemID != Self.streamProbeID else { return }
         DispatchQueue.main.async { [weak self] in
             self?.applyProgress(
                 itemID: itemID,
@@ -1691,7 +1792,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     ) {
         let kind = DownloadSessionKind(session: session)
         progressThrottleTimes.removeValue(forKey: DownloadTaskKey(kind: kind, task: downloadTask))
-        guard let itemID = downloadTask.taskDescription else { return }
+        guard let itemID = downloadTask.taskDescription, itemID != Self.streamProbeID else { return }
 
         // Capture response metadata here (thread-safe reads) for validation on main.
         let http = downloadTask.response as? HTTPURLResponse
@@ -1810,7 +1911,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                     downloadTasks.removeValue(forKey: itemID)
                 }
                 persistStateNow()
-                beginDownload(active: updated, clearsFailure: false)
+                continueWithNextPiece(updated)
                 return
             case .complete:
                 finishedFileURL = Self.partialURL(for: itemID)
@@ -1945,6 +2046,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         let kind = DownloadSessionKind(session: session)
         progressThrottleTimes.removeValue(forKey: DownloadTaskKey(kind: kind, task: task))
         let itemID = task.taskDescription
+        if itemID == Self.streamProbeID {
+            DispatchQueue.main.async { [weak self] in self?.streamProbeFinished() }
+            return
+        }
         let nsError = error.map { $0 as NSError }
         let resumeData = nsError?.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
         // Present when the system cancelled a background-session transfer (user force-quit the app,
@@ -2029,9 +2134,13 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     private func appendPiece(_ staged: URL, piece: (start: Int64, end: Int64, total: Int64), to active: ActiveDownloadItem) -> PieceOutcome {
         let fm = FileManager.default
         let part = Self.partialURL(for: active.id)
-        let committed = piece.start == 0 ? 0 : (active.committedBytes ?? 0)
+        // A transfer continued from resume data (a pause, or a move between sessions) hands back the whole
+        // piece, but its response only describes the resumed tail: the file's size says where it starts.
+        let stagedSize = (try? fm.attributesOfItem(atPath: staged.path)[.size] as? Int64) ?? 0
+        let start = stagedSize > piece.end - piece.start + 1 ? piece.end + 1 - stagedSize : piece.start
+        let committed = start == 0 ? 0 : (active.committedBytes ?? 0)
         var updated = active
-        guard piece.start == committed, active.remoteSize == nil || active.remoteSize == piece.total || committed == 0 else {
+        guard start == committed, active.remoteSize == nil || active.remoteSize == piece.total || committed == 0 else {
             try? fm.removeItem(at: staged)
             discardPartial(for: active.id)
             updated.committedBytes = 0
@@ -2299,6 +2408,20 @@ final class NotificationManager {
             relatedItemID: nil
         )
         upsertNotification(notif)
+    }
+
+    /// Smart Downloads removed a watched episode. In-app only: no banner for housekeeping.
+    func recordWatchedDownloadRemoved(item: DownloadedMediaItem) {
+        upsertNotification(AppNotification(
+            id: "dl-removed-\(item.id)",
+            category: .downloadComplete,
+            title: "Removed Watched Download • \(item.cleanTitle)",
+            message: "\(item.subtitle ?? "Episode") • freed \(item.formattedSize)",
+            artworkURL: item.artworkURL,
+            createdAt: Date(),
+            isRead: false,
+            relatedItemID: item.id
+        ))
     }
 
     func recordDownloadFailed(item: ActiveDownloadItem, reason: String) {

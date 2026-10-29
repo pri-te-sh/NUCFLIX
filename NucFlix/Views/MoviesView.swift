@@ -416,6 +416,27 @@ struct MovieDetailView: View {
                 .background(Color(white: 0.20), in: Capsule())
                 .foregroundStyle(.white)
             }
+        } else if downloadManager.isQueued(itemID) {
+            Button {
+                downloadManager.cancelDownload(id: itemID)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: downloadManager.isPausedForStreaming ? "pause.circle" : "clock")
+                        .font(.system(size: 15, weight: .bold))
+                    Text(downloadManager.isPausedForStreaming ? "Paused while someone is watching" : "Waiting to download")
+                        .font(.system(size: 14, weight: .bold))
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(Color(white: 0.20), in: Capsule())
+                .foregroundStyle(.white)
+            }
         } else if let downloaded = downloadManager.downloadedItem(for: itemID) {
             Menu {
                 Button {

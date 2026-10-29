@@ -42,7 +42,7 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 ### 📱 iPhone
 - Live TV with a TV guide (EPG), Movies and Series
 - Plays almost anything (MKV, TS, HLS…) with **MobileVLCKit**
-- **Downloads** for offline viewing
+- **Smart Downloads** for offline viewing: they pause while anyone in the household is streaming from the line (most IPTV lines allow one connection), pick up where they stopped, and delete episodes once they've been watched
 - **AirPlay** and **Picture-in-Picture**
 - **Next episode when the credits start**, **Skip Intro**, dead-channel check and smart search (see [Smart features](#-smart-features))
 - Sign in with **Google** or email
@@ -223,7 +223,7 @@ users/{uid}
 │   ├── favorites/{contentKey}  My List
 │   └── progress/{contentKey}   Continue Watching (position, duration, device)
 ├── members/{tvUid}             paired TVs
-├── devices/{uid}
+├── devices/{deviceId}          what each phone/TV is streaming right now (downloads pause meanwhile)
 ├── markers/{contentKey}        AI: where the credits start / the intro runs (shared by the household)
 └── lineTags/{lineId}           AI: kids, adult, language and genre per category (written by Cloud Functions)
 aiUsage/{uid}                   daily AI call count (Cloud Functions only)

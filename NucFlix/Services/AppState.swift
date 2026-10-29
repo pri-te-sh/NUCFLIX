@@ -680,6 +680,7 @@ final class AppState {
         activePlayback = nil
         cloudSync?.stop()
         cloudSync = nil
+        StreamPresence.shared.stop()
         activeProfileID = nil
         activeLineID = nil
         isKidsProfile = false
@@ -711,6 +712,7 @@ final class AppState {
         let sync = CloudSync(appState: self, uid: uid, profileID: profile.id, lineID: line.id)
         cloudSync = sync
         sync.start()
+        StreamPresence.shared.start(uid: uid, lineID: line.id)
         if sameLine && userInfo != nil {
             scheduleHomeFeedRebuild(delay: 0)
         } else {
@@ -727,6 +729,31 @@ final class AppState {
     func applyCloudHistory(_ entries: [WatchHistoryEntry]) {
         watchHistory = Array(entries.prefix(50))
         scheduleHomeFeedRebuild(delay: 2)
+        removeWatchedDownloads()
+    }
+
+    // MARK: - Smart Downloads
+
+    /// What the player has open right now (in-place episode changes included), so its file is never deleted mid-play.
+    @ObservationIgnored private(set) var playingItemID: String?
+
+    func setPlayingItem(_ id: String?) {
+        guard playingItemID != id else { return }
+        playingItemID = id
+        removeWatchedDownloads()
+    }
+
+    /// Deletes downloaded episodes watched (on any device) since they were downloaded. An episode downloaded
+    /// again after watching it is kept until it's watched again.
+    func removeWatchedDownloads() {
+        let downloads = DownloadManager.shared
+        guard downloads.deleteWatchedEpisodes else { return }
+        for item in downloads.downloadedItems where item.contentType == .seriesEpisode && item.id != playingItemID {
+            guard let entry = watchHistory.first(where: { $0.id == item.id }), entry.isWatched,
+                  entry.lastWatchedAt > item.downloadedAt else { continue }
+            downloads.deleteDownload(id: item.id)
+            NotificationManager.shared.recordWatchedDownloadRemoved(item: item)
+        }
     }
 
     // MARK: - Fast Category-Driven Catalog Loading

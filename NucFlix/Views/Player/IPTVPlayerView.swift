@@ -259,6 +259,8 @@ struct IPTVPlayerView: View {
         }
         .onDisappear {
             isDismissed = true
+            StreamPresence.shared.setStreaming(nil)
+            appState.setPlayingItem(nil)
             ai.stop()
             aiCreditsTask?.cancel()
             endCountdownTask?.cancel()
@@ -1324,6 +1326,9 @@ struct IPTVPlayerView: View {
             playerError = "Unable to construct a valid stream URL for this item."
             return
         }
+        // Streaming from the line takes its connection: downloads step aside (playing a download doesn't).
+        StreamPresence.shared.setStreaming(url.isFileURL ? nil : item)
+        appState.setPlayingItem(item.id)
 
         if useVLCEngine {
             AirPlayCastRemuxServer.shared.stopSession()

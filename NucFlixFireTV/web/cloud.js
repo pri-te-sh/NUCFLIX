@@ -278,14 +278,49 @@ const Cloud = (() => {
     tagsUnsub = db.doc(`users/${owner}/lineTags/${lineId}`).onSnapshot(d => cb((d.exists && d.get('cats')) || {}), () => { });
   }
 
+  // ---------------------------------------------------------------- now playing
+  // users/{owner}/devices/{tvUid}: while this TV streams from the line, phones pause their downloads (lines
+  // often allow one connection). lastSeen is refreshed every minute, so a TV that dies stops counting.
+  let nowPlaying = null;
+  let presenceTimer = null;
+  let hiddenNowPlaying = null;
+
+  function writePresence() {
+    if (!db || !owner || !tvUid) return;
+    db.doc(`users/${owner}/devices/${tvUid}`).set({
+      name: clip(deviceName, 80), platform: 'firetv', lastSeen: FieldValue.serverTimestamp(),
+      nowPlaying: nowPlaying && session
+        ? { lineId: session.lineId, kind: nowPlaying.kind, title: clip(nowPlaying.title || 'Untitled', 200) }
+        : null
+    }).catch(e => console.warn('presence', e));
+  }
+
+  /** np: { kind, title } while the player streams from the line, null once it stops. */
+  function setNowPlaying(np) {
+    const was = !!nowPlaying;
+    nowPlaying = np || null;
+    clearInterval(presenceTimer);
+    presenceTimer = nowPlaying ? setInterval(writePresence, 60000) : null;
+    if (nowPlaying || was) writePresence();
+  }
+
   function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n) : s; }
 
-  window.addEventListener('pagehide', flush);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+  window.addEventListener('pagehide', () => { flush(); setNowPlaying(null); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      flush();
+      hiddenNowPlaying = nowPlaying; // the player stops while NucFlix is in the background
+      setNowPlaying(null);
+    } else if (hiddenNowPlaying) {
+      setNowPlaying(hiddenNowPlaying);
+      hiddenNowPlaying = null;
+    }
+  });
 
   return {
     start, beginPairing, unpair, watchHousehold, stopHousehold, startSession, stopSession,
-    setFavorite, saveProgress, flush, deleteProgress, savePrefs, ai, getMarker, saveMarker, watchLineTags,
+    setFavorite, saveProgress, flush, deleteProgress, savePrefs, ai, getMarker, saveMarker, watchLineTags, setNowPlaying,
     get paired() { return !!owner; },
     get ownerName() { return ls.get(K.ownerName) || ''; },
     get lastProfileId() { return ls.get(K.profile); },

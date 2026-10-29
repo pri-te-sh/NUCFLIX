@@ -2867,6 +2867,7 @@
       else this.render();
       stage.classList.add('video-passthrough');
       VideoAPI.start(item.url, item.uid, item.resume || 0);
+      Cloud.setNowPlaying({ kind: item.kind, title: item.title }); // phones pause downloads meanwhile
       PlayerAI.start(item);
       if (this.aspect !== 'fit') VideoAPI.setAspect(this.aspect);
       logTaste(item.kind, item.data || item.series || item.channel || { cleanName: item.title, categoryId: item.categoryId }, 'play', 3.0);
@@ -3237,6 +3238,7 @@
       this.saveProgress();
       PlayerAI.stop();
       Cloud.flush();
+      Cloud.setNowPlaying(null);
       this.cancelNext(true);
       clearTimeout(this.osdTimer);
       clearTimeout(this.seekTimer);

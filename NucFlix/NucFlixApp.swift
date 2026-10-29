@@ -10,6 +10,7 @@ struct NucFlixApp: App {
     init() {
         // Firebase must be configured before the account store attaches its auth listener.
         CloudBootstrap.configure()
+        StreamPresence.shared.install()
         _appState = State(initialValue: AppState())
         _cloud = State(initialValue: CloudAccount())
     }

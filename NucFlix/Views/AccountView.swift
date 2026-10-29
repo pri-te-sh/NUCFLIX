@@ -55,6 +55,11 @@ struct DownloadsView: View {
 
                         Divider().overlay(Color.white.opacity(0.10))
 
+                        if downloadManager.isPausedForStreaming {
+                            streamingPauseBanner
+                                .padding(.top, 12)
+                        }
+
                         if let err = downloadManager.lastDownloadError {
                             downloadErrorBanner(err)
                                 .padding(.top, 12)
@@ -312,7 +317,7 @@ struct DownloadsView: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
-                Text("Waiting in queue • \(queued.qualityLabel)")
+                Text("\(downloadManager.isPausedForStreaming ? "Paused" : "Waiting in queue") • \(queued.qualityLabel)")
                     .font(.system(size: 13))
                     .foregroundStyle(netflixMutedText)
             }
@@ -396,6 +401,27 @@ struct DownloadsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    /// Your line has one connection: downloads wait while anyone in the household is watching.
+    private var streamingPauseBanner: some View {
+        let who = downloadManager.watchingDeviceNames.first.map { "\($0) is" } ?? "Someone is"
+        return HStack(spacing: 10) {
+            Image(systemName: "pause.circle")
+                .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Paused while \(who) watching")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text("Your IPTV line allows one stream at a time. Downloads pick up again when playback stops.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(netflixSurfaceGray, in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 16)
     }
 
     private func downloadErrorBanner(_ err: String) -> some View {
@@ -1107,6 +1133,32 @@ struct AccountView: View {
                                     Spacer()
 
                                     Toggle("", isOn: Bindable(downloadManager).keepAwakeWhileDownloading)
+                                        .labelsHidden()
+                                        .tint(netflixDownloadBlue)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+
+                                rowDivider
+
+                                HStack(spacing: 16) {
+                                    Image(systemName: "trash.circle")
+                                        .font(.system(size: 20, weight: .regular))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                        .frame(width: 24)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Delete Watched Episodes")
+                                            .font(.system(size: 16, weight: .regular))
+                                            .foregroundStyle(.white)
+                                        Text("Removes a downloaded episode once it's been watched on any device, to free up space")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(netflixMutedText)
+                                    }
+
+                                    Spacer()
+
+                                    Toggle("", isOn: Bindable(downloadManager).deleteWatchedEpisodes)
                                         .labelsHidden()
                                         .tint(netflixDownloadBlue)
                                 }

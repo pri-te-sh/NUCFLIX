@@ -31,6 +31,7 @@
 		A10000210000000000000001 /* MobileVLCKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000220000000000000001 /* MobileVLCKit.xcframework */; };
 		A10000220000000000000001 /* MobileVLCKit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A20000220000000000000001 /* MobileVLCKit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B10000010000000000000000 /* Cloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000010000000000000000 /* Cloud.swift */; };
+		B10000080000000000000000 /* StreamPresence.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000080000000000000000 /* StreamPresence.swift */; };
 		B10000070000000000000000 /* SmartAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000070000000000000000 /* SmartAI.swift */; };
 		B10000020000000000000000 /* CloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000020000000000000000 /* CloudSync.swift */; };
 		B10000030000000000000000 /* CloudAuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000030000000000000000 /* CloudAuthView.swift */; };
@@ -87,6 +88,7 @@
 		B20000010000000000000000 /* Cloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cloud.swift; sourceTree = "<group>"; };
 		B20000020000000000000000 /* CloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSync.swift; sourceTree = "<group>"; };
 		B20000070000000000000000 /* SmartAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartAI.swift; sourceTree = "<group>"; };
+		B20000080000000000000000 /* StreamPresence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamPresence.swift; sourceTree = "<group>"; };
 		B20000030000000000000000 /* CloudAuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudAuthView.swift; sourceTree = "<group>"; };
 		B20000040000000000000000 /* ProfilePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePickerView.swift; sourceTree = "<group>"; };
 		B20000050000000000000000 /* LinesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinesView.swift; sourceTree = "<group>"; };
@@ -158,6 +160,7 @@
 			children = (
 				B20000020000000000000000 /* CloudSync.swift */,
 				B20000070000000000000000 /* SmartAI.swift */,
+				B20000080000000000000000 /* StreamPresence.swift */,
 				B20000010000000000000000 /* Cloud.swift */,
 				A20000060000000000000001 /* XtreamAPIService.swift */,
 				A20000070000000000000001 /* AppState.swift */,
@@ -287,6 +290,7 @@
 				B10000030000000000000000 /* CloudAuthView.swift in Sources */,
 				B10000020000000000000000 /* CloudSync.swift in Sources */,
 				B10000070000000000000000 /* SmartAI.swift in Sources */,
+				B10000080000000000000000 /* StreamPresence.swift in Sources */,
 				B10000010000000000000000 /* Cloud.swift in Sources */,
 				A10000010000000000000001 /* NucFlixApp.swift in Sources */,
 				A10000020000000000000001 /* FlexibleDecodable.swift in Sources */,
