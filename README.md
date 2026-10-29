@@ -16,6 +16,8 @@
 ![Ollama](https://img.shields.io/badge/Ollama%20Cloud-Clef%20%2B%20Gemma%204-000000?style=for-the-badge&logo=ollama&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-E50914?style=for-the-badge)](LICENSE)
 
+**[🌐 Project website](https://pri-te-sh.github.io/NUCFLIX/)**
+
 [Features](#-features) · [Smart features](#-smart-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Getting started](#-getting-started) · [Project layout](#-project-layout) · [Privacy](#-privacy--security) · [License](#-license)
 
 </div>
