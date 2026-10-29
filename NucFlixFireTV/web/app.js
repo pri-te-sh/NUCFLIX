@@ -2626,12 +2626,21 @@
   // titles for Skip Intro. Both are saved as markers, so a title is only analysed once per household.
   // Live: two frames ~3 s apart catch channels that are black, frozen or off air.
 
+  // Finding intros frame by frame doesn't work on real shows (an opening montage reads as "a scene"), so the
+  // scan is off; saved intro markers still show Skip Intro. Planned instead: matching the opening across
+  // episodes of a series, the way streaming services do.
+  const INTRO_SCAN = false;
+  const INTRO_SCAN_UNTIL = 420; // opening titles usually come within the first 7 minutes
+
   const PlayerAI = {
     item: null,
     ref: null,
     marker: null,
     busy: false,
-    lastCheck: 0,
+    nextCheckAt: 0,
+    scene: null,      // a normal scene from this title (JPEG base64): sent along so the AI can compare
+    lastPos: null,    // for spotting seeks: { pos, at }
+    pass: 0,          // bumped on every seek: answers to checks started before it are dropped
     creditsHit: null,
     creditsDone: false,
     intro: null,
@@ -2653,7 +2662,9 @@
       this.item = null;
       this.marker = null;
       this.busy = false;
-      this.lastCheck = 0;
+      this.nextCheckAt = 0;
+      this.scene = null;
+      this.lastPos = null;
       this.creditsHit = null;
       this.creditsDone = false;
       this.liveDone = false;
@@ -2675,6 +2686,7 @@
       if (!m || !st.duration) return;
       const pos = st.position || 0;
       const dur = st.duration;
+      this.watchForSeeks(pos, st.playing);
       if (!this.creditsDone) {
         if (typeof m.creditsAt === 'number' && m.creditsAt > 0) {
           if (pos >= m.creditsAt && pos < dur - 2) this.creditsReached(st);
@@ -2687,22 +2699,47 @@
           const from = m.introStart || 0;
           if (m.introEnd > from + 5 && pos >= from - 1 && pos < m.introEnd - 3) this.showSkip(m.introEnd);
           else this.hideSkip();
-        } else if (!this.intro.done && pos < 300 && st.playing) {
+        } else if (INTRO_SCAN && !this.intro.done && pos < INTRO_SCAN_UNTIL && st.playing) {
           this.check('intro', pos, st);
         }
       }
     },
 
+    /** A jump (scrubbing, Skip, resume) breaks the run of frames the evidence was built on: start over. */
+    watchForSeeks(pos, playing) {
+      // Compared even while buffering (a seek pauses playback for a moment). Standing still is a stall, not a
+      // jump; only moving backwards, or forwards faster than the clock, is.
+      const prev = this.lastPos;
+      this.lastPos = { pos, at: Date.now(), playing };
+      if (!prev) return;
+      const ran = prev.playing ? (Date.now() - prev.at) / 1000 * (Player.speed || 1) : 0;
+      if (pos > prev.pos - 3 && pos < prev.pos + ran + 8) return;
+      // Every jump starts a fresh pass over the opening minutes (also after one that ended without a result);
+      // "no intro" is only concluded by a pass that ran unbroken from the first minute.
+      const m = this.marker;
+      this.pass++;
+      if (!(m && typeof m.introEnd === 'number')) {
+        Object.assign(this.intro, { start: null, last: null, first: null, candidate: null, done: false });
+      }
+      this.creditsHit = null;
+      this.nextCheckAt = Date.now() + 2000; // look again once the picture has settled
+    },
+
     async check(task, pos, st) {
-      if (this.busy || Date.now() - this.lastCheck < 10000 || Smart.disabled) return;
+      if (this.busy || Date.now() < this.nextCheckAt || Smart.disabled) return;
       const it = this.item;
+      const pass = this.pass;
       this.busy = true;
-      this.lastCheck = Date.now();
+      this.nextCheckAt = Date.now() + 10000;
       try {
         const f = await Smart.frame();
         if (!f || this.item !== it) return;
-        const r = await Smart.frameCheck(task, [f.b64], it.title);
-        if (!r || this.item !== it) return;
+        // Next to a normal scene from this episode an opening montage stands out clearly (on real episodes:
+        // 0.2–0.5 "intro" alone, 0.86–0.95 compared). Credits are clear on their own.
+        const images = task === 'intro' && this.scene ? [f.b64, this.scene] : [f.b64];
+        const r = await Smart.frameCheck(task, images, it.title);
+        if (!r || this.item !== it || this.pass !== pass) return; // the picture moved on meanwhile
+        if (!this.scene && !f.black && (r.probabilities || {}).programme >= 0.7) this.scene = f.b64;
         if (task === 'credits') this.creditsFrame(r, pos, st);
         else this.introFrame(r, pos, st);
       } finally {
@@ -2713,14 +2750,14 @@
     creditsFrame(r, pos, st) {
       const p = r.probabilities || {};
       const credits = (p.end_credits || 0) + (p.next_preview || 0);
-      if (credits < 0.75) { this.creditsHit = null; return; }
-      if (this.creditsHit == null) this.creditsHit = pos;
-      // Two sightings ~10 s apart, or one very sure one.
-      if (credits >= 0.92 || pos - this.creditsHit >= 8) {
-        this.marker.creditsAt = this.creditsHit;
-        Cloud.saveMarker(this.ref.kind, this.ref.id, { creditsAt: this.creditsHit, duration: st.duration });
-        this.creditsReached(st);
+      if (credits < 0.7) { this.creditsHit = null; return; }
+      if (this.creditsHit == null) {
+        this.creditsHit = pos;
+        if (credits < 0.92) { this.nextCheckAt = Date.now() + 3000; return; } // confirm with a second look
       }
+      this.marker.creditsAt = this.creditsHit;
+      Cloud.saveMarker(this.ref.kind, this.ref.id, { creditsAt: this.creditsHit, duration: st.duration });
+      this.creditsReached(st);
     },
 
     creditsReached(st) {
@@ -2734,24 +2771,25 @@
       const p = r.probabilities || {};
       const intro = this.intro;
       if (intro.first == null) intro.first = pos;
-      if ((p.intro || 0) >= 0.75) {
-        // Two sightings in a row before the titles count as started (one text-heavy frame is not an intro).
+      if ((p.intro || 0) >= 0.7) {
+        // Two sightings in a row (3 s apart) before the titles count as started: one odd frame isn't an intro.
+        this.nextCheckAt = Date.now() + 3000; // and look often while inside, to find the end to a second or two
         if (intro.start == null) {
           if (intro.candidate == null) { intro.candidate = pos; return; }
-          intro.start = Math.max(0, intro.candidate - 5);
+          intro.start = Math.max(0, intro.candidate - 4);
         }
         intro.last = pos;
         return;
       }
       intro.candidate = null;
       if (intro.start != null) {
-        intro.done = true; // the titles just ended
-        const end = Math.min(pos, intro.last + 5);
+        intro.done = true; // the titles just ended, somewhere between the last two looks
+        const end = Math.round((intro.last + pos) / 2 * 10) / 10;
         Object.assign(this.marker, { introStart: intro.start, introEnd: end });
         Cloud.saveMarker(this.ref.kind, this.ref.id, { introStart: intro.start, introEnd: end, duration: st.duration });
-      } else if (pos > 240) {
+      } else if (pos > INTRO_SCAN_UNTIL - 20) {
         intro.done = true;
-        // No opening titles in the first four minutes: remember that too — but only if we watched them.
+        // No opening titles in the first minutes: remember that too, but only if all of them were watched.
         if (intro.first >= 60) return;
         Object.assign(this.marker, { introStart: 0, introEnd: 0 });
         Cloud.saveMarker(this.ref.kind, this.ref.id, { introStart: 0, introEnd: 0, duration: st.duration });

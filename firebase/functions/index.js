@@ -134,6 +134,21 @@ const FRAME_TASKS = {
       logo_or_black: 'A studio or channel logo, a black frame, or a fade between scenes'
     }
   },
+  // The intro question with a second image: a normal scene from this episode to compare against. Opening
+  // montages rarely look like the show's own sets and cast, which a single frame can't show (on real
+  // episodes: 0.2–0.5 alone, 0.86–0.95 compared). Credits are clear on their own; a reference only blurred them.
+  introRef: {
+    state: 'Image 1 is a frame from the first minutes of a TV episode. Image 2 is a normal scene from the same '
+      + 'episode, for reference. Decide whether image 1 is part of the opening title sequence.',
+    criteria: {
+      programme: 'Image 1 is a scene of the show like image 2: its usual sets, cast and look (captions, a new room '
+        + 'or a close-up within the story count too)',
+      intro: 'Image 1 looks unlike the show\'s scenes: a stylised opening montage (archival or historical photos, '
+        + 'animation, space, graphics, timelines), the show\'s title or logo, or opening credits over theme visuals',
+      recap: 'A "previously on" recap of earlier episodes',
+      logo_or_black: 'A studio or channel logo, a black frame, or a fade between scenes'
+    }
+  },
   // Live channel health: two frames ~3 s apart.
   live: {
     state: 'Two frames from a live TV channel, captured about 3 seconds apart, to check the channel is really broadcasting.',
@@ -159,7 +174,8 @@ const FRAME_TASKS = {
 
 export const frameCheck = onCall(options, async request => {
   const owner = await household(request);
-  let task = request.data?.task === 'liveStill' ? null : FRAME_TASKS[request.data?.task];
+  const name = request.data?.task;
+  let task = ['intro', 'credits', 'live'].includes(name) ? FRAME_TASKS[name] : null;
   let images = request.data?.images;
   if (!task) throw new HttpsError('invalid-argument', 'Unknown task.');
   if (!Array.isArray(images) || images.length < 1 || images.length > 2 || !images.every(checkImage)) {
@@ -168,6 +184,8 @@ export const frameCheck = onCall(options, async request => {
   if (task === FRAME_TASKS.live && images.length === 2 && images[0] === images[1]) {
     task = FRAME_TASKS.liveStill; // nothing moved: one frame and a sharper question
     images = [images[0]];
+  } else if (images.length === 2 && name === 'intro') {
+    task = FRAME_TASKS.introRef; // second image = a normal scene from the same episode
   }
   const title = str(request.data?.title, 200) ? ` Title: ${request.data.title}.` : '';
   await spend(owner, 1);
@@ -175,7 +193,15 @@ export const frameCheck = onCall(options, async request => {
     screen: { type: 'choice', instructions: 'What is on screen?', criteria: task.criteria }
   }, images);
   const a = answers.screen || {};
-  return { label: a.choice || null, confidence: a.confidence ?? 0, probabilities: a.probabilities || {} };
+  const probabilities = a.probabilities || {};
+  // Verdicts only (never the frame), for tuning the thresholds the apps use.
+  logger.info('frameCheck verdict', {
+    task: request.data.task, title: request.data?.title, label: a.choice || null,
+    confidence: round(a.confidence ?? 0),
+    p: Object.fromEntries(Object.entries(probabilities).map(([k, v]) => [k, round(v)])),
+    frames: images.length, bytes: images.reduce((n, b) => n + Math.round(b.length * 0.75), 0)
+  });
+  return { label: a.choice || null, confidence: a.confidence ?? 0, probabilities };
 });
 
 // ------------------------------------------------------------------ classifyCategories

@@ -53,6 +53,9 @@ describe('frameCheck', () => {
     const b = await tvPaired.call('frameCheck', { task: 'credits', images: [JPEG], ownerUid, title: 'Show S1E1' });
     assert.equal(b.label, 'end_credits');
     assert.ok(b.confidence > 0.5 && b.probabilities.end_credits > 0.9);
+    writeFileSync(framesFile, JSON.stringify({ intro: 'intro', live: 'black' }));
+    const compared = await tvPaired.call('frameCheck', { task: 'intro', images: [JPEG, JPEG], ownerUid, title: 'Show S1E1' });
+    assert.equal(compared.label, 'intro'); // frame + a reference scene from the same episode
     const live = await tvPaired.call('frameCheck', { task: 'live', images: [JPEG, JPEG], ownerUid });
     assert.equal(live.label, 'black');
   });
@@ -62,6 +65,7 @@ describe('frameCheck', () => {
     await rejects(tvStranger.call('frameCheck', { task: 'credits', images: [JPEG], ownerUid }), 'permission-denied');
     await rejects(owner.call('frameCheck', { task: 'credits', images: ['aGVsbG8='] }), 'invalid-argument');
     await rejects(owner.call('frameCheck', { task: 'nope', images: [JPEG] }), 'invalid-argument');
+    await rejects(owner.call('frameCheck', { task: 'introRef', images: [JPEG] }), 'invalid-argument');
     await rejects(owner.call('frameCheck', { task: 'live', images: [JPEG, JPEG, JPEG] }), 'invalid-argument');
   });
 });

@@ -31,7 +31,7 @@ IPTV apps usually look like spreadsheets of channels. NucFlix turns any **Xtream
 - Big artwork rows and a billboard.
 - A "Who's watching?" screen with a profile for each person.
 - Continue Watching that follows you from the couch to your phone.
-- A bit of AI where it helps: it **sees** when the end credits really start, finds the intro to skip, spots dead channels, keeps kids profiles kid-safe and understands searches like *"funny hindi movies from the 2010s"*.
+- A bit of AI where it helps: it **sees** when the end credits really start, spots dead channels, keeps kids profiles kid-safe and understands searches like *"funny hindi movies from the 2010s"*.
 
 You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 
@@ -46,7 +46,7 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 - Plays almost anything (MKV, TS, HLS…) with **MobileVLCKit**
 - **Smart Downloads** for offline viewing: they pause while anyone in the household is streaming from the line (most IPTV lines allow one connection), pick up where they stopped, and delete episodes once they've been watched
 - **AirPlay** and **Picture-in-Picture**
-- **Next episode when the credits start**, **Skip Intro**, dead-channel check and smart search (see [Smart features](#-smart-features))
+- **Next episode when the credits start**, dead-channel check and smart search (see [Smart features](#-smart-features))
 - Sign in with **Google** or email
 - Manage people, kids profiles, IPTV lines and paired TVs
 
@@ -58,7 +58,7 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 - Native **Media3 ExoPlayer** playback under the web UI
 - Timeline scrubbing with **thumbnail previews**
 - **Autoplay next episode** with a countdown, timed to the real end credits
-- **Skip Intro** and the dead-channel check, using frames grabbed from the player
+- The dead-channel check, using frames grabbed from the player
 - Repairs broken MPEG-TS timestamps from some providers, and MKV files missing their H.264 header
 - Plays **DTS and Dolby TrueHD** audio (which Fire TVs can't decode) with a built-in FFmpeg decoder
 - Search from your phone with the built-in **phone helper**
@@ -91,7 +91,7 @@ Everything works on both the iPhone and the Fire TV, and every feature falls bac
 | | Feature | What you see |
 | --- | --- | --- |
 | 🎬 | **Real end-of-episode detection** | "Next Episode" appears when the **end credits actually start**, not just in the last 25 seconds, then plays on after a 10-second countdown. The episode counts as watched from that moment. |
-| ⏭ | **Skip Intro** | A Skip Intro button over the opening titles of a series. The first person in the household to watch a show's opening finds it; everyone gets the button after that. |
+| ⏭ | **Skip Intro** *(on hold)* | Planned: found by matching each show's opening across its episodes, instead of judging single frames. |
 | 📡 | **Dead channel check** | About 13 seconds into a live channel showing a **black, frozen or "no signal"** picture, a banner offers the same station in another quality ("Try Sky News HD"), switching in place. |
 | 🧒 | **Kid-safe categories** | Every provider category gets tagged for kids-suitability, adult content, language and genre. Kids profiles only see kid-friendly categories, and adult ones are hidden even when the provider names them oddly. |
 | 🔎 | **Smart search** | Type a request like *"scary films from the 80s"* or *"cricket channels in hindi"* and a ✨ section shows matching titles, with the filters it understood ("Horror movies, 1980–1989"). |
@@ -151,11 +151,11 @@ sequenceDiagram
     participant F as Cloud Function
     participant C as Clef (Ollama)
     participant D as Firestore
-    P->>D: Any saved credits / intro marker for this episode?
+    P->>D: Any saved credits marker for this episode?
     alt marker found
-        D-->>P: creditsAt, introStart, introEnd (no AI needed)
+        D-->>P: creditsAt (no AI needed)
     else no marker yet
-        loop every 10 s in the last 20% (credits) or first 5 min (intro)
+        loop every 10 s in the last 20% of the runtime
             P->>P: grab the frame on screen (~512 px JPEG)
             P->>F: frameCheck(task, frame, title)
             F->>C: "What is on screen?" + choices
@@ -164,7 +164,7 @@ sequenceDiagram
         end
         P->>D: save the marker for the whole household
     end
-    P->>P: show Next Episode / Skip Intro
+    P->>P: show Next Episode
 ```
 
 <details>
@@ -172,19 +172,17 @@ sequenceDiagram
 
 - Scanning starts at 80% of the runtime (or 10 minutes before the end) for anything longer than 5 minutes.
 - Each frame is classified as **programme**, **end credits**, **next-episode preview** or **logo / black**.
-- Credits count as started after one very sure answer (≥ 92%) or two answers ≥ 75% at least 8 seconds apart, so one dark scene doesn't end the episode early.
+- Credits count as started after one very sure answer (≥ 92%), or two answers ≥ 70% a few seconds apart (the second look comes 3 s after the first), so one dark scene doesn't end the episode early. Jumping around the timeline discards half-confirmed sightings.
 - The moment is saved as `creditsAt`. From then on the title saves as **watched**, and on later plays (on any device) the countdown appears at that point without asking the AI again.
 - If no credits are found, the old behaviour still applies: the card appears in the last 25 seconds.
 
 </details>
 
 <details>
-<summary><b>⏭ Skip Intro</b></summary>
+<summary><b>⏭ Skip Intro (on hold)</b></summary>
 
-- In the first 5 minutes of an episode, frames are classified as **programme**, **opening titles**, **"previously on" recap** or **logo / black**. On-screen captions and news tickers count as programme.
-- Two opening-title sightings in a row (≥ 75%) mark the start; the first normal frame after that marks the end.
-- `introStart` / `introEnd` are saved, and the button shows between them for everyone in the household.
-- If nothing is found in the first 4 minutes (and the scan really watched the start), "no intro" is saved so it isn't checked again.
+- Tried and paused: judging single frames can't find intros on real shows. An opening montage (planets, old photos) reads as "a scene" unless the model is coached, and a 20-second theme rarely gives two clear looks.
+- Planned instead: matching the opening across episodes of a series with on-device frame fingerprints, the way streaming services do. The player still shows Skip Intro for any saved `introStart` / `introEnd`.
 
 </details>
 
@@ -227,7 +225,7 @@ users/{uid}
 │   └── progress/{contentKey}   Continue Watching (position, duration, device)
 ├── members/{tvUid}             paired TVs
 ├── devices/{deviceId}          what each phone/TV is streaming right now (downloads pause meanwhile)
-├── markers/{contentKey}        AI: where the credits start / the intro runs (shared by the household)
+├── markers/{contentKey}        AI: where the credits start (shared by the household)
 └── lineTags/{lineId}           AI: kids, adult, language and genre per category (written by Cloud Functions)
 aiUsage/{uid}                   daily AI call count (Cloud Functions only)
 pairing/{code}                  short-lived TV pairing codes
@@ -346,7 +344,8 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 
 - [x] Shared household account with people profiles and kids mode
 - [x] TV pairing, synced My List and Continue Watching
-- [x] AI: real end-credits detection, Skip Intro, dead-channel check, kid-safe category tags, smart search
+- [x] AI: real end-credits detection, dead-channel check, kid-safe category tags, smart search
+- [ ] Skip Intro by matching the opening across episodes (frame fingerprints)
 - [ ] Use AI tags for genre rows on the home screen
 - [ ] "Now playing" hand-off: move what's playing between phone and TV
 - [ ] Sync recommendation history (currently stored per device)

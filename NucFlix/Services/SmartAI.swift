@@ -294,7 +294,13 @@ final class PlayerAI {
     @ObservationIgnored private var marker: SmartAI.ContentMarker?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var busy = false
-    @ObservationIgnored private var lastCheck = Date.distantPast
+    @ObservationIgnored private var nextCheckAt = Date.distantPast
+    /// A normal scene from this episode, sent with intro checks so the AI can compare: on real episodes an opening
+    /// montage scored 0.2–0.5 "intro" alone and 0.86–0.95 next to a scene from the same episode.
+    @ObservationIgnored private var scene: Data?
+    @ObservationIgnored private var lastPosition: (position: Double, at: Date, playing: Bool)?
+    /// Bumped on every seek: answers to checks started before it are dropped.
+    @ObservationIgnored private var pass = 0
     @ObservationIgnored private var creditsHit: Double?
     @ObservationIgnored private var creditsDone = false
     @ObservationIgnored private var introStart: Double?
@@ -306,6 +312,13 @@ final class PlayerAI {
     @ObservationIgnored private var playingSince: Date?
 
     private static let checkInterval: TimeInterval = 10
+    private static let confirmInterval: TimeInterval = 3
+    /// Finding intros frame by frame doesn't work on real shows (an opening montage reads as "a scene"), so the
+    /// scan is off; saved intro markers still show Skip Intro. Planned instead: matching the opening across
+    /// episodes of a series, the way streaming services do.
+    private static let introScan = false
+    /// Opening titles usually come within the first 7 minutes.
+    private static let introScanUntil: Double = 420
 
     func start(item: PlaybackItem, lineID: String?) {
         stop()
@@ -333,7 +346,9 @@ final class PlayerAI {
         ref = nil
         marker = nil
         busy = false
-        lastCheck = .distantPast
+        nextCheckAt = .distantPast
+        scene = nil
+        lastPosition = nil
         creditsHit = nil
         creditsDone = false
         introStart = nil
@@ -364,6 +379,7 @@ final class PlayerAI {
             return
         }
         guard let m = marker, duration > 1, duration.isFinite else { return }
+        watchForSeeks(position, playing: playing)
         if !creditsDone {
             if let at = m.creditsAt, at > 0 {
                 if position >= at && position < duration - 2 { creditsReached() }
@@ -376,22 +392,48 @@ final class PlayerAI {
             let from = m.introStart ?? 0
             let target: Double? = end > from + 5 && position >= from - 1 && position < end - 3 ? end : nil
             if skipIntroTo != target { skipIntroTo = target }
-        } else if !introDone && position < 300 && playing {
+        } else if Self.introScan && !introDone && position < Self.introScanUntil && playing {
             check("intro", position: position, duration: duration)
         }
     }
 
+    /// A jump (scrubbing, skipping, resuming) breaks the run of frames the evidence was built on: start over.
+    private func watchForSeeks(_ position: Double, playing: Bool) {
+        // Compared even while buffering (a seek pauses playback for a moment). Standing still is a stall, not a
+        // jump; only moving backwards, or forwards faster than the clock, is.
+        let previous = lastPosition
+        lastPosition = (position, Date(), playing)
+        guard let previous else { return }
+        let ran = previous.playing ? Date().timeIntervalSince(previous.at) : 0
+        guard position <= previous.position - 3 || position >= previous.position + ran + 8 else { return }
+        pass += 1
+        // Every jump starts a fresh pass over the opening minutes (also after one that ended without a result);
+        // "no intro" is only concluded by a pass that ran unbroken from the first minute.
+        if marker?.introEnd == nil {
+            introStart = nil
+            introLast = nil
+            introCandidate = nil
+            introFirstCheck = nil
+            introDone = false
+        }
+        creditsHit = nil
+        nextCheckAt = Date().addingTimeInterval(2) // look again once the picture has settled
+    }
+
     private func check(_ task: String, position: Double, duration: Double) {
-        guard !busy, Date().timeIntervalSince(lastCheck) >= Self.checkInterval, !SmartAI.shared.disabled,
-              let grabFrame, let item else { return }
+        guard !busy, Date() >= nextCheckAt, !SmartAI.shared.disabled, let grabFrame, let item else { return }
         busy = true
-        lastCheck = Date()
+        nextCheckAt = Date().addingTimeInterval(Self.checkInterval)
         let gen = generation
+        let pass = self.pass
+        let scene = self.scene
         Task { @MainActor in
             defer { if self.generation == gen { self.busy = false } }
             guard let frame = await grabFrame(), self.generation == gen,
-                  let r = await SmartAI.shared.frameCheck(task: task, images: [frame], title: item.title),
-                  self.generation == gen else { return }
+                  let r = await SmartAI.shared.frameCheck(task: task, images: task == "intro" ? scene.map { [frame, $0] } ?? [frame] : [frame],
+                                                          title: item.title),
+                  self.generation == gen, self.pass == pass else { return }
+            if self.scene == nil && r.p("programme") >= 0.7 { self.scene = frame }
             if task == "credits" {
                 self.creditsFrame(r, position: position, duration: duration)
             } else {
@@ -402,14 +444,15 @@ final class PlayerAI {
 
     private func creditsFrame(_ r: SmartAI.FrameVerdict, position: Double, duration: Double) {
         let credits = r.p("end_credits") + r.p("next_preview")
-        guard credits >= 0.75 else {
+        guard credits >= 0.7 else {
             creditsHit = nil
             return
         }
-        let hit = creditsHit ?? position
-        creditsHit = hit
-        // Two sightings ~10 s apart, or one very sure one.
-        guard credits >= 0.92 || position - hit >= 8 else { return }
+        guard let hit = creditsHit ?? (credits >= 0.92 ? position : nil) else {
+            creditsHit = position // confirm with a second look a few seconds later
+            nextCheckAt = Date().addingTimeInterval(Self.confirmInterval)
+            return
+        }
         marker?.creditsAt = hit
         if let ref { SmartAI.shared.saveMarker(lineID: ref.lineID, kind: ref.kind, id: ref.id, duration: duration, fields: ["creditsAt": hit]) }
         creditsReached()
@@ -423,14 +466,16 @@ final class PlayerAI {
 
     private func introFrame(_ r: SmartAI.FrameVerdict, position: Double, duration: Double) {
         if introFirstCheck == nil { introFirstCheck = position }
-        if r.p("intro") >= 0.75 {
-            // Two sightings in a row before the titles count as started (one text-heavy frame is not an intro).
+        if r.p("intro") >= 0.7 {
+            // Two sightings in a row (3 s apart) before the titles count as started: one odd frame isn't an
+            // intro. Keep looking often while inside, to find the end to a second or two.
+            nextCheckAt = Date().addingTimeInterval(Self.confirmInterval)
             if introStart == nil {
                 guard let candidate = introCandidate else {
                     introCandidate = position
                     return
                 }
-                introStart = max(0, candidate - 5)
+                introStart = max(0, candidate - 4)
             }
             introLast = position
             return
@@ -438,11 +483,11 @@ final class PlayerAI {
         introCandidate = nil
         var fields: [String: Double]?
         if let start = introStart {
-            introDone = true // the titles just ended
-            fields = ["introStart": start, "introEnd": min(position, (introLast ?? position) + 5)]
-        } else if position > 240 {
+            introDone = true // the titles just ended, somewhere between the last two looks
+            fields = ["introStart": start, "introEnd": ((introLast ?? position) + position) / 2]
+        } else if position > Self.introScanUntil - 20 {
             introDone = true
-            // No opening titles in the first four minutes: remember that too — but only if we watched them.
+            // No opening titles in the first minutes: remember that too, but only if all of them were watched.
             if (introFirstCheck ?? .infinity) < 60 { fields = ["introStart": 0, "introEnd": 0] }
         }
         guard let fields else { return }

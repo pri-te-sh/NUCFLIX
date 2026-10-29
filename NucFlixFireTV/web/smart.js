@@ -52,8 +52,12 @@ const Smart = (() => {
   }
 
   /** Clef's verdict on one or two frames: { label, confidence, probabilities } or null. */
-  function frameCheck(task, images, title) {
-    return call('frameCheck', { task, images, title: title ? String(title).slice(0, 200) : undefined });
+  const recent = []; // last verdicts, for debugging on the TV (chrome://inspect on --debug builds)
+  async function frameCheck(task, images, title) {
+    const r = await call('frameCheck', { task, images, title: title ? String(title).slice(0, 200) : undefined });
+    recent.push({ at: new Date().toISOString(), task, label: r && r.label, p: r && r.probabilities });
+    if (recent.length > 60) recent.shift();
+    return r;
   }
 
   // ---------------------------------------------------------------- live channel alternatives
@@ -177,5 +181,5 @@ const Smart = (() => {
     return parts.charAt(0).toUpperCase() + parts.slice(1) + (years ? `, ${years}` : '') + words;
   }
 
-  return { frame, onFrame, frameCheck, alternatives, Tags, searchFilters, applyFilters, describe, get disabled() { return disabled; } };
+  return { frame, onFrame, frameCheck, alternatives, Tags, searchFilters, applyFilters, describe, recent, get disabled() { return disabled; } };
 })();
