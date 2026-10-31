@@ -32,6 +32,30 @@
     exitApp: () => post({ type: 'exit' })
   };
 
+  // Same methods as the Android NucFlixBridge (MainActivity.java). Video goes to the native W3C player in
+  // NucFlixVega/src/NativePlayer.ts, drawn behind this page; it answers through App.onNativeVideoState.
+  const video = op => (...args) => post({ type: 'video', op, args });
+  window.NucFlixNative = {
+    // Artwork loads directly: the Android /api/img proxy (downsizing) has no Vega counterpart yet.
+    directImages: true,
+    startVideo: video('start'),
+    stopVideo: video('stop'),
+    togglePause: video('togglePause'),
+    seekTo: video('seekTo'),
+    setSpeed: video('setSpeed'),
+    setAspectMode: video('setAspectMode'),
+    selectTrack: video('selectTrack'),
+    beginScrub: video('beginScrub'),
+    endScrub: video('endScrub'),
+    // No frame grabs from the Vega video surface yet: answer "no picture" so callers don't wait.
+    requestThumb: (sec, id) => setTimeout(() => window.App && App.onThumb(id, sec, ''), 0),
+    captureFrame: id => setTimeout(() => window.App && App.onFrame(id, '', false), 0),
+    playTudum: () => { },
+    openInVlc: () => { },
+    promptInput: () => { },
+    exitApp: () => post({ type: 'exit' })
+  };
+
   const SESSION = JSON.stringify({ deviceModel: 'Fire TV (Vega OS)' });
   const nativeFetch = window.fetch.bind(window);
 

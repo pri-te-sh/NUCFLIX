@@ -22,11 +22,12 @@
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  // Artwork goes through the native proxy, which also downsizes it to the width actually displayed.
+  // Artwork goes through the native proxy, which also downsizes it to the width actually displayed
+  // (except on bridges without one, e.g. Vega's).
   const imgURL = (u, w = 0) => {
     const s = String(u || '').trim();
     if (!/^https?:\/\//i.test(s)) return '';
-    return Native ? '/api/img?url=' + encodeURIComponent(s) + (w ? '&w=' + w : '') : s;
+    return Native && !Native.directImages ? '/api/img?url=' + encodeURIComponent(s) + (w ? '&w=' + w : '') : s;
   };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const pad2 = n => String(n).padStart(2, '0');

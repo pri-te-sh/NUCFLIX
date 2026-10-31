@@ -1,7 +1,9 @@
 import {WebView} from '@amazon-devices/webview';
 import * as React from 'react';
-import {useCallback, useEffect, useRef} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {View, StyleSheet} from 'react-native';
+import {KeplerVideoView, VideoPlayer} from '@amazon-devices/react-native-w3cmedia';
+import {AspectMode, NucFlixPlayer} from './NativePlayer';
 import {
   useHideSplashScreenCallback,
   useKeplerBackHandler,
@@ -24,7 +26,16 @@ type BridgeMessage =
   | {type: 'xtream'; id: number; url: string | null}
   | {type: 'probe'; id: number; url: string}
   | {type: 'exit'}
+  | {type: 'video'; op: string; args: any[]}
   | {type: 'log'; level: 'info' | 'error'; msg: string};
+
+// Debug: a URL here plays instead of every movie/episode (e.g. a public sample such as
+// https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4) to test the video pipeline
+// when the provider won't serve this TV. Empty string = normal playback.
+const TEST_STREAM_URL = '';
+
+// KeplerVideoView's scaling for the UI's aspect modes (Android: applyAspectMode).
+const SCALING: Record<AspectMode, 'fit' | 'fill' | 'strech'> = {fit: 'fit', fill: 'fill', '16:9': 'strech'};
 
 /**
  * Debug: the line's own view of itself (player_api.php user_info) for the stream URL's credentials —
@@ -158,6 +169,68 @@ export const App = () => {
     return () => subs.forEach(s => s.remove());
   }, [backHandler]);
 
+  // Native video layer, drawn behind the (then transparent) WebView like the Android SurfaceView.
+  const [video, setVideo] = useState<{player: VideoPlayer | null; aspect: AspectMode}>({
+    player: null,
+    aspect: 'fit',
+  });
+  const player = useMemo(
+    () =>
+      new NucFlixPlayer(USER_AGENT, {
+        state: s =>
+          webRef.current?.injectJavaScript(
+            `window.App && App.onNativeVideoState(${JSON.stringify(s)}); true;`,
+          ),
+        view: (p, aspect) => setVideo({player: p, aspect}),
+        log: m => {
+          console.info(`[player] ${m}`);
+          webRef.current?.injectJavaScript(
+            `window.__nucflixDebug && window.__nucflixDebug(${JSON.stringify('player: ' + m)}); true;`,
+          );
+        },
+      }),
+    [],
+  );
+  useEffect(() => () => void player.stop(), [player]);
+
+  const onVideoCall = useCallback(
+    (op: string, a: any[]) => {
+      switch (op) {
+        case 'start': {
+          const itemId = String(a[1] || '');
+          const url = TEST_STREAM_URL && !itemId.startsWith('live-') ? TEST_STREAM_URL : String(a[0]);
+          player.start(url, itemId, Number(a[2]) || 0);
+          break;
+        }
+        case 'stop':
+          player.stop();
+          break;
+        case 'togglePause':
+          player.togglePause();
+          break;
+        case 'seekTo':
+          player.seekTo(Number(a[0]) || 0);
+          break;
+        case 'setSpeed':
+          player.setSpeed(Number(a[0]) || 1);
+          break;
+        case 'setAspectMode':
+          player.setAspect(String(a[0]));
+          break;
+        case 'selectTrack':
+          player.selectTrack(Number(a[0]), !!a[1]);
+          break;
+        case 'beginScrub':
+          player.beginScrub();
+          break;
+        case 'endScrub':
+          player.endScrub(Number(a[0]) || 0);
+          break;
+      }
+    },
+    [player],
+  );
+
   const onMessage = useCallback(async (event: WebViewMessageEvent) => {
     let msg: BridgeMessage;
     try {
@@ -165,7 +238,9 @@ export const App = () => {
     } catch {
       return;
     }
-    if (msg.type === 'exit') {
+    if (msg.type === 'video') {
+      onVideoCall(msg.op, msg.args || []);
+    } else if (msg.type === 'exit') {
       backHandler.exitApp();
     } else if (msg.type === 'log') {
       (msg.level === 'error' ? console.error : console.info)(`[web] ${msg.msg}`);
@@ -180,13 +255,22 @@ export const App = () => {
         `window.__nucflixReply(${msg.id}, ${status}, ${JSON.stringify(body)}); true;`,
       );
     }
-  }, [backHandler]);
+  }, [backHandler, onVideoCall]);
 
   return (
     <View style={styles.container}>
+      {video.player && (
+        <KeplerVideoView
+          style={StyleSheet.absoluteFill}
+          videoPlayer={video.player}
+          showControls={false}
+          showCaptions
+          scalingmode={SCALING[video.aspect]}
+        />
+      )}
       <WebView
         ref={webRef}
-        style={styles.webview}
+        style={[styles.webview, video.player ? styles.overVideo : null]}
         allowSystemKeyEvents
         allowsDefaultMediaControl={false}
         domStorageEnabled
@@ -219,6 +303,8 @@ export const App = () => {
 
 // Styles for layout, which are necessary for proper focus behavior
 const styles = StyleSheet.create({
-  container: {flex: 1},
-  webview: {backgroundColor: '#000000'},
+  container: {flex: 1, backgroundColor: '#000000'},
+  webview: {...StyleSheet.absoluteFillObject, backgroundColor: '#000000'},
+  // During playback the page goes see-through (app.js: #stage.video-passthrough) over the video.
+  overVideo: {backgroundColor: 'transparent'},
 });
