@@ -152,7 +152,10 @@ const Cloud = (() => {
     return db.doc(`users/${owner}/profiles/${session.profileId}`);
   }
 
-  /** Streams the profile's favorites and progress for the line (filtered client-side by lineId). */
+  /**
+   * Streams the profile's favorites and progress for the line (filtered client-side by lineId).
+   * Resolves once both have delivered their first answer (or failed), so Home can wait for them.
+   */
   function startSession(profileId, lineId, { onFavorites, onProgress }) {
     stopSession();
     session = { profileId, lineId };
@@ -161,9 +164,18 @@ const Cloud = (() => {
     const ref = profileRef();
     const mine = docs => docs.map(d => Object.assign({ key: d.id }, d.data({ serverTimestamps: 'estimate' })))
       .filter(d => d.lineId === lineId);
-    profileUnsubs.push(ref.collection('favorites').onSnapshot(s => onFavorites(mine(s.docs)), () => { }));
+    let pending = 2;
+    let done;
+    const ready = new Promise(resolve => { done = resolve; });
+    const once = () => {
+      let called = false;
+      return () => { if (called) return; called = true; if (--pending === 0) done(); };
+    };
+    const favLoaded = once(), progLoaded = once();
+    profileUnsubs.push(ref.collection('favorites').onSnapshot(s => { onFavorites(mine(s.docs)); favLoaded(); }, favLoaded));
     profileUnsubs.push(ref.collection('progress').orderBy('updatedAt', 'desc').limit(150)
-      .onSnapshot(s => onProgress(mine(s.docs)), () => { }));
+      .onSnapshot(s => { onProgress(mine(s.docs)); progLoaded(); }, progLoaded));
+    return ready;
   }
 
   function stopSession() {
@@ -269,13 +281,21 @@ const Cloud = (() => {
     db.doc(`users/${owner}/markers/${contentKey(kind, id)}`).set(doc, { merge: true }).catch(e => console.warn('marker', e));
   }
 
-  /** Live AI category tags for a line: cb({ 'live:12': { kids, adult, lang, genre }, ... }). */
+  /**
+   * Live AI category tags for a line: cb({ 'live:12': { kids, adult, lang, genre }, ... }).
+   * Resolves after the first answer has been handed to cb (or the read failed).
+   */
   let tagsUnsub = null;
   function watchLineTags(lineId, cb) {
     if (tagsUnsub) tagsUnsub();
     tagsUnsub = null;
-    if (!db || !owner || !lineId) return;
-    tagsUnsub = db.doc(`users/${owner}/lineTags/${lineId}`).onSnapshot(d => cb((d.exists && d.get('cats')) || {}), () => { });
+    if (!db || !owner || !lineId) return Promise.resolve();
+    return new Promise(resolve => {
+      tagsUnsub = db.doc(`users/${owner}/lineTags/${lineId}`).onSnapshot(d => {
+        cb((d.exists && d.get('cats')) || {});
+        resolve();
+      }, () => resolve());
+    });
   }
 
   // ---------------------------------------------------------------- now playing

@@ -95,6 +95,7 @@
     favorites: new Set(),
     history: [],
     episodeProgress: {},
+    syncing: false, // true until the profile's synced data has first arrived (see useLine)
     taste: [],
     cloud: { profiles: [], lines: [], profile: null, line: null },
     prefs: Object.assign({
@@ -1356,6 +1357,9 @@
     return { entry: { kind: p.item.kind, data: p.item.data }, reason: p.reason };
   }
 
+  /** The catalog is loaded and the profile's synced data (Continue Watching, My List, tags) has arrived. */
+  function dataReady() { return S.cat.loaded && !S.syncing; }
+
   function loadingView(msg) {
     return `<div class="center-status-screen"><div class="spinner big"></div><h2>${esc(msg)}</h2></div>`;
   }
@@ -1567,6 +1571,8 @@
     await useLine(line);
   }
 
+  let syncToken = 0;
+
   /** Watches through `line` for the current profile; the line's login stays in memory (S.creds). */
   async function useLine(line) {
     S.favorites = new Set();
@@ -1574,7 +1580,11 @@
     S.episodeProgress = {};
     lastProgressDocs = [];
     S.cloud.line = line;
-    Cloud.startSession(S.cloud.profile.id, line.id, { onFavorites: applyCloudFavorites, onProgress: applyCloudProgress });
+    // Home waits (behind its loading screen) for Continue Watching, My List and the category tags, so it
+    // doesn't open half-filled and then reshuffle under the user's focus.
+    const token = ++syncToken;
+    S.syncing = true;
+    const synced = Cloud.startSession(S.cloud.profile.id, line.id, { onFavorites: applyCloudFavorites, onProgress: applyCloudProgress });
     const creds = { id: line.id, lineName: line.name, serverURL: line.serverURL, username: line.username, password: line.password };
     if (preloadP) await preloadP;
     preloadP = null;
@@ -1597,20 +1607,36 @@
           toast(`Couldn’t reach ${line.name}: ${e.message}`, 6000);
         }
       }
-      markDirty();
-      if (S.screen === 'home') refocusAfter($('#home-screen'), () => Home.render());
     } else {
       refreshInBackground(Date.now());
     }
+    // Offline or slow: give up waiting after a few seconds; the listeners still fill things in later.
+    await Promise.race([Promise.all([synced, startTags(line)]), new Promise(r => setTimeout(r, 8000))]);
+    if (token !== syncToken) return; // switched line/profile while waiting
+    S.syncing = false;
+    markDirty();
+    const tab = ['home', 'movies', 'series', 'mylist', 'live'].includes(S.screen) ? S.screen : null;
+    if (tab) {
+      // While loading, focus could only sit on the tab's own nav item; move it into the content that just arrived.
+      const parked = Focus.cur && Focus.cur === navEl.querySelector('.focusable.active');
+      refocusAfter($(`#${tab}-screen`), () => Screens[tab].render(S.screenArgs));
+      if (parked) Focus.set(defaultFocusFor(tab) || Focus.cur);
+    }
     prerenderTabs();
-    startTags(line);
   }
 
   /** AI category tags (kids-safe, adult, language, genre) for the line; re-filters the catalog as they arrive. */
   let tagsTimer = null;
   function startTags(line) {
-    if (!S.raw) return;
-    Smart.Tags.start(line.id, S.raw, () => {
+    if (!S.raw) return Promise.resolve();
+    let first = true;
+    return Smart.Tags.start(line.id, S.raw, () => {
+      // The saved tags filter the catalog before Home first shows; later changes are batched.
+      if (first) {
+        first = false;
+        if (isKids() || !S.prefs.showAdult) applyCatalogFilter();
+        return;
+      }
       clearTimeout(tagsTimer);
       tagsTimer = setTimeout(() => {
         if (!S.raw || !S.cloud.line || S.cloud.line.id !== line.id) return;
@@ -1787,7 +1813,7 @@
 
     render() {
       const root = $('#home-screen');
-      if (!S.cat.loaded) { mount(root, loadingView('Loading NucFlix…')); return; }
+      if (!dataReady()) { mount(root, loadingView('Loading NucFlix…')); return; }
       if (!this.dirty && root.querySelector('.rows-content')) return;
       this.dirty = false;
       this.buildFeed();
@@ -1872,7 +1898,7 @@
       render(args = {}) {
         this.catId = args.catId || null;
         const root = this.root();
-        if (!S.cat.loaded) { mount(root, loadingView('Loading…')); return; }
+        if (!dataReady()) { mount(root, loadingView('Loading…')); return; }
         if (this.catId) { this.rowsRev = -1; this.renderGrid(); return; }
         // Revisiting the tab with unchanged data keeps the already-rendered rows (no rebuild / relayout).
         const rev = S.rev + ':' + S.cat.version;
@@ -2013,7 +2039,7 @@
   const MyList = {
     render() {
       const root = $('#mylist-screen');
-      if (!S.cat.loaded) { mount(root, loadingView('Loading…')); return; }
+      if (!dataReady()) { mount(root, loadingView('Loading…')); return; }
       const rows = [];
       const mine = favoriteEntries();
       if (mine.length) rows.push(posterRow('ml-list', 'My List', mine));
@@ -2232,7 +2258,7 @@
     render(args = {}) {
       if (args.catId) this.catId = args.catId;
       const root = $('#live-screen');
-      if (!S.cat.loaded) { mount(root, loadingView('Loading channels…')); return; }
+      if (!dataReady()) { mount(root, loadingView('Loading channels…')); return; }
       const cats = this.cats();
       if (!this.catId || (this.catId !== '__fav' && !cats.find(c => c.categoryId === this.catId))) {
         this.catId = cats.length ? cats[0].categoryId : '__fav';

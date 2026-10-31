@@ -81,11 +81,14 @@ const Smart = (() => {
     running: false,
     onChange: null,
 
-    /** Follows the line's tags and fills in categories that don't have any yet (in the background). */
+    /**
+     * Follows the line's tags and fills in categories that don't have any yet (in the background).
+     * Resolves once the saved tags have been read.
+     */
     start(lineId, raw, onChange) {
       this.lineId = lineId;
       this.onChange = onChange;
-      Cloud.watchLineTags(lineId, map => {
+      return Cloud.watchLineTags(lineId, map => {
         if (this.lineId !== lineId) return;
         this.map = map;
         if (this.onChange) this.onChange(map);
