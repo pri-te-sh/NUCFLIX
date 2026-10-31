@@ -697,13 +697,32 @@ final class AppState {
     /// True while settings are being taken from the profile, so they aren't written straight back.
     @ObservationIgnored private var applyingProfilePrefs = false
 
-    /// The profile's synced settings (Autoplay Next Episode, Show Adult Content), shared with the Fire TV.
-    /// Called on activation and whenever the profile document changes.
+    /// The profile's synced settings (Autoplay Next Episode, Show Adult Content, audio and subtitle languages),
+    /// shared with the Fire TV. Called on activation and whenever the profile document changes.
     func applyProfilePrefs(_ profile: CloudProfile) {
         applyingProfilePrefs = true
         defer { applyingProfilePrefs = false }
         autoplayNextEpisode = profile.autoplayNext
         showAdultContent = !profile.kids && profile.showAdult
+        preferredAudioLang = profile.audioLang
+        preferredSubLang = profile.subLang
+    }
+
+    /// Audio / subtitle languages picked last: audio "" = the stream's default; subtitles nil = the stream's
+    /// default, "" = off. A pick in the player becomes the language for every title after it, on every device.
+    private(set) var preferredAudioLang = ""
+    private(set) var preferredSubLang: String?
+
+    func rememberAudioLang(_ code: String) {
+        guard code != preferredAudioLang else { return }
+        preferredAudioLang = code
+        cloudSync?.savePrefs(["audioLang": code])
+    }
+
+    func rememberSubLang(_ code: String) {
+        guard code != preferredSubLang else { return }
+        preferredSubLang = code
+        cloudSync?.savePrefs(["subLang": code])
     }
 
     /// Starts (or switches) the session for a person profile watching through an Xtream line. The line's

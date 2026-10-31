@@ -143,6 +143,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private volatile String aspectMode = "fit"; // "fit", "fill", "16:9"
     private int selectedAudioTrack = -1;
     private int selectedSubtitleTrack = -1;
+    // The languages the viewer picked last (the profile's prefs, sent by the UI). Applied to every new title so
+    // the next episode starts with the same audio and subtitles. null = the stream's default; text "" = off.
+    private volatile String prefAudioLang = null;
+    private volatile String prefTextLang = null;
     private boolean nativeDialogShowing = false;
     // A D-pad press still being handled by the UI; key repeats that arrive meanwhile are dropped so a
     // held key can't queue up seconds of moves (measured: 20 queued presses took 1.26 s to drain).
@@ -468,6 +472,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     private void startNativePlayer(String url, String itemId, double resumeSec) {
         stopNativePlayer();
+        applyTrackPrefs();
         currentVideoUrl = url;
         currentItemId = itemId;
         pendingSeekSeconds = resumeSec;
@@ -478,6 +483,21 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     private boolean isLive() {
         return currentItemId != null && currentItemId.startsWith("live-");
+    }
+
+    /** Preferred languages instead of the last title's one-off track choice (that only fits its own tracks). */
+    private void applyTrackPrefs() {
+        ExoPlayer p = exoPlayer();
+        TrackSelectionParameters.Builder b = p.getTrackSelectionParameters().buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .setPreferredAudioLanguage(prefAudioLang);
+        if ("".equals(prefTextLang)) {
+            b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).setPreferredTextLanguage(null);
+        } else {
+            b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage(prefTextLang);
+        }
+        p.setTrackSelectionParameters(b.build());
     }
 
     /**
@@ -878,7 +898,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                     if (!group.isTrackSupported(t)) continue;
                     n++;
                     int index = g * 1000 + t;
-                    JSONObject o = new JSONObject().put("index", index).put("name", trackName(f, n));
+                    JSONObject o = new JSONObject().put("index", index).put("name", trackName(f, n))
+                            .put("lang", f.language == null || "und".equals(f.language) ? "" : f.language);
                     if (type == C.TRACK_TYPE_AUDIO) {
                         audioArr.put(o);
                         if (group.isTrackSelected(t)) selectedAudioTrack = index;
@@ -1048,6 +1069,16 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 applyAspectMode();
                 player.post(() -> emitVideoState("aspect", null));
             });
+        }
+
+        /**
+         * The profile's language choices for new titles: audio "" = the stream's default; text "*" = default
+         * (off unless the stream marks a track), "" = off, else a language code.
+         */
+        @JavascriptInterface
+        public void setTrackPrefs(String audioLang, String textLang) {
+            prefAudioLang = audioLang == null || audioLang.isEmpty() ? null : audioLang;
+            prefTextLang = textLang == null || "*".equals(textLang) ? null : textLang;
         }
 
         /** {@code trackIndex} is group * 1000 + track (see refreshTracks); -1 turns subtitles off. */

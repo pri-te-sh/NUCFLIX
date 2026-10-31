@@ -852,6 +852,7 @@ struct IPTVPlayerView: View {
                                 Button {
                                     selectedAudioTrack = track.index
                                     vlcPlayer?.currentAudioTrackIndex = track.index
+                                    if let code = TrackLanguage.code(fromName: track.name) { appState.rememberAudioLang(code) }
                                     showAudioSubtitleSheet = false
                                 } label: {
                                     HStack {
@@ -874,6 +875,12 @@ struct IPTVPlayerView: View {
                                 Button {
                                     selectedSubtitleTrack = track.index
                                     vlcPlayer?.currentVideoSubTitleIndex = track.index
+                                    // VLC lists "Disable" as track -1: subtitles off.
+                                    if track.index < 0 {
+                                        appState.rememberSubLang("")
+                                    } else if let code = TrackLanguage.code(fromName: track.name) {
+                                        appState.rememberSubLang(code)
+                                    }
                                     showAudioSubtitleSheet = false
                                 } label: {
                                     HStack {
@@ -1207,6 +1214,23 @@ struct IPTVPlayerView: View {
         updateNowPlayingInfo()
     }
 
+    /// Starts the title with the profile's audio and subtitle languages (picked last, here or on the TV).
+    private func applyPreferredTracks() {
+        guard let vlcPlayer else { return }
+        let audio = appState.preferredAudioLang
+        if !audio.isEmpty, let track = audioTracks.first(where: { TrackLanguage.code(fromName: $0.name) == audio }),
+           track.index != selectedAudioTrack {
+            vlcPlayer.currentAudioTrackIndex = track.index
+            selectedAudioTrack = track.index
+        }
+        guard let subs = appState.preferredSubLang else { return }
+        let target: Int32? = subs.isEmpty ? -1 : subtitleTracks.first { $0.index >= 0 && TrackLanguage.code(fromName: $0.name) == subs }?.index
+        if let target, target != selectedSubtitleTrack {
+            vlcPlayer.currentVideoSubTitleIndex = target
+            selectedSubtitleTrack = target
+        }
+    }
+
     private func refreshVLCTracks() {
         guard let vlcPlayer else { return }
         if let names = vlcPlayer.audioTrackNames as? [String],
@@ -1378,6 +1402,7 @@ struct IPTVPlayerView: View {
                 }
                 if self.audioTracks.isEmpty && player.numberOfAudioTracks > 0 {
                     self.refreshVLCTracks()
+                    self.applyPreferredTracks()
                 }
                 self.saveProgressIfNeeded(position: elapsedSec, duration: max(totalSec, 0))
                 self.ai.tick(position: elapsedSec, duration: max(totalSec, 0), playing: self.isPlaying)
@@ -3019,5 +3044,43 @@ final class AirPlayCastRemuxServer: NSObject, VLCMediaPlayerDelegate {
             ptr = interface.ifa_next
         }
         return wifiIP ?? fallbackIP
+    }
+}
+
+/// The language of a VLC track from its name ("English 5.1 - [English]", "Track 2 - [hin]", "Hindi"), as a
+/// two-letter code like the Fire TV's player reports ("en", "hi"); nil when the name carries no language.
+enum TrackLanguage {
+    private static let byName: [String: String] = {
+        let english = Locale(identifier: "en")
+        var map: [String: String] = [:]
+        for code in Locale.LanguageCode.isoLanguageCodes.map(\.identifier) where code.count == 2 {
+            if let name = english.localizedString(forLanguageCode: code)?.lowercased() { map[name] = code }
+        }
+        return map
+    }()
+
+    /// ISO 639-2/B codes some files use instead of the terminology ones Locale knows ("fre" for "fra").
+    private static let bibliographic = ["fre": "fr", "ger": "de", "dut": "nl", "chi": "zh", "cze": "cs", "gre": "el",
+                                        "per": "fa", "rum": "ro", "slo": "sk", "alb": "sq", "arm": "hy", "baq": "eu",
+                                        "bur": "my", "geo": "ka", "ice": "is", "mac": "mk", "mao": "mi", "may": "ms",
+                                        "tib": "bo", "wel": "cy"]
+
+    static func code(fromName name: String) -> String? {
+        var candidates: [String] = []
+        if let open = name.lastIndex(of: "["), let close = name.lastIndex(of: "]"), open < close {
+            candidates.append(String(name[name.index(after: open)..<close]))
+        }
+        candidates.append(name)
+        candidates += name.split(whereSeparator: { !$0.isLetter }).map(String.init)
+        for raw in candidates {
+            let word = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            if let code = byName[word] ?? bibliographic[word] { return code }
+            if (2...3).contains(word.count), word.allSatisfy(\.isLetter),
+               let code = Locale.Language(identifier: word).languageCode?.identifier(.alpha2),
+               byName.values.contains(code) {
+                return code
+            }
+        }
+        return nil
     }
 }

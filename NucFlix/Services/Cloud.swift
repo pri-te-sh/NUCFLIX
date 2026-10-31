@@ -74,6 +74,10 @@ struct CloudProfile: Identifiable, Equatable, Hashable {
     // Synced settings (prefs map), shared with the Fire TV app.
     var autoplayNext: Bool
     var showAdult: Bool
+    /// Audio / subtitle languages picked last (shared with the TV): audio "" = the stream's default;
+    /// subtitles nil = the stream's default, "" = off.
+    var audioLang: String
+    var subLang: String?
     /// Profile Lock: SHA-256 of "nucflix-pin:<profileId>:<pin>" (same as the Fire TV app), empty when off.
     var pinHash: String
 
@@ -99,6 +103,8 @@ struct CloudProfile: Identifiable, Equatable, Hashable {
         self.autoplayNext = prefs["autoplayNext"] as? Bool ?? true
         self.showAdult = !kids && (prefs["showAdult"] as? Bool ?? false)
         self.pinHash = prefs["pinHash"] as? String ?? ""
+        self.audioLang = prefs["audioLang"] as? String ?? ""
+        self.subLang = prefs["subLang"] as? String
     }
 }
 

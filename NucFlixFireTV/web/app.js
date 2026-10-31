@@ -1836,8 +1836,8 @@
   }
 
   /**
-   * The profile's synced settings (Autoplay Next Episode, Show Adult Content), shared with the iPhone app.
-   * Returns true when the adult filter changed.
+   * The profile's synced settings (Autoplay Next Episode, Show Adult Content, audio and subtitle languages),
+   * shared with the iPhone app. Returns true when the adult filter changed.
    */
   function applyProfilePrefs(profile) {
     const p = profile.prefs || {};
@@ -1845,8 +1845,21 @@
     const changed = showAdult !== S.prefs.showAdult;
     S.prefs.autoplayNext = p.autoplayNext !== false;
     S.prefs.showAdult = showAdult;
+    // audioLang: '' = the stream's default. subLang: unset = default (off unless the stream marks one), '' = off.
+    S.prefs.audioLang = typeof p.audioLang === 'string' ? p.audioLang : '';
+    S.prefs.subLang = typeof p.subLang === 'string' ? p.subLang : null;
+    VideoAPI.setTrackPrefs(S.prefs.audioLang, S.prefs.subLang);
     savePrefs();
     return changed;
+  }
+
+  /** A track picked in the player becomes the profile's language for every title (and device) after it. */
+  function rememberTrackLang(field, lang) {
+    if (S.prefs[field] === lang) return;
+    S.prefs[field] = lang;
+    VideoAPI.setTrackPrefs(S.prefs.audioLang, S.prefs.subLang);
+    savePrefs();
+    Cloud.savePrefs({ [field]: lang });
   }
 
   let syncToken = 0;
@@ -3157,6 +3170,7 @@
       setSpeed(s) { if (v) v.playbackRate = s; },
       setAspect() { },
       selectTrack() { },
+      setTrackPrefs() { },
       beginScrub() { if (v) v.pause(); },
       requestThumb() { },
       endScrub(s) { if (v) { v.currentTime = s; v.play().catch(() => { }); } }
@@ -3171,6 +3185,7 @@
     setSpeed: s => Native.setSpeed(Number(s) || 1),
     setAspect: m => Native.setAspectMode(m),
     selectTrack: (i, a) => Native.selectTrack(i, !!a),
+    setTrackPrefs: (audio, text) => Native.setTrackPrefs(String(audio || ''), String(text == null ? '*' : text)),
     beginScrub: () => Native.beginScrub(),
     requestThumb: (s, id) => Native.requestThumb(Number(s) || 0, id | 0),
     endScrub: s => Native.endScrub(Number(s) || 0)
@@ -3767,16 +3782,29 @@
       audio.forEach((t, i) => rows.push({
         label: `Audio • ${t.name}`, value: i === 0 && st.selectedAudioTrack < 0 ? 'Default' : '',
         selected: st.selectedAudioTrack === t.index,
-        onSelect: () => { VideoAPI.selectTrack(t.index, true); Modal.close(); toast(`Audio: ${t.name}`); }
+        onSelect: () => {
+          VideoAPI.selectTrack(t.index, true);
+          if (t.lang) rememberTrackLang('audioLang', t.lang);
+          Modal.close();
+          toast(`Audio: ${t.name}`);
+        }
       }));
       if (subs.length) {
-        rows.push({ label: 'Subtitles • Off', selected: st.selectedSubtitleTrack < 0, onSelect: () => { VideoAPI.selectTrack(-1, false); Modal.close(); toast('Subtitles off'); } });
+        rows.push({
+          label: 'Subtitles • Off', selected: st.selectedSubtitleTrack < 0,
+          onSelect: () => { VideoAPI.selectTrack(-1, false); rememberTrackLang('subLang', ''); Modal.close(); toast('Subtitles off'); }
+        });
         subs.forEach(t => rows.push({
           label: `Subtitles • ${t.name}`, selected: st.selectedSubtitleTrack === t.index,
-          onSelect: () => { VideoAPI.selectTrack(t.index, false); Modal.close(); toast(`Subtitles: ${t.name}`); }
+          onSelect: () => {
+            VideoAPI.selectTrack(t.index, false);
+            if (t.lang) rememberTrackLang('subLang', t.lang);
+            Modal.close();
+            toast(`Subtitles: ${t.name}`);
+          }
         }));
       }
-      listModal({ title: 'Audio & Subtitles', subtitle: 'Tracks reported by the stream', rows });
+      listModal({ title: 'Audio & Subtitles', subtitle: 'Your choice carries over to the next titles, on every device', rows });
     },
 
     episodePicker() {
