@@ -136,6 +136,8 @@ final class CloudAccount {
     }
 
     var authError: String?
+    /// A pairing code from a scanned TV QR code, waiting for the user to confirm (see RootView).
+    var scannedPairCode: String?
     var isBusy = false
 
     @ObservationIgnored private var authHandle: AuthStateDidChangeListenerHandle?
@@ -255,9 +257,16 @@ final class CloudAccount {
         return tvName
     }
 
+    /// Unpairs a TV: it loses access at once (and drops back to its pairing code); its presence goes too.
     func removeTV(_ tv: PairedTV) async {
         guard let uid else { return }
-        await run { try await db.collection("users").document(uid).collection("members").document(tv.id).delete() }
+        let user = db.collection("users").document(uid)
+        await run {
+            let batch = db.batch()
+            batch.deleteDocument(user.collection("members").document(tv.id))
+            batch.deleteDocument(user.collection("devices").document(tv.id))
+            try await batch.commit()
+        }
     }
 
     func selectProfile(_ id: String?) {

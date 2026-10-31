@@ -6,6 +6,7 @@ struct PairTVView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
     @State private var pairedName: String?
+    @State private var removing: CloudAccount.PairedTV?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -13,7 +14,7 @@ struct PairTVView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("On the TV, open NucFlix — it shows an 8-character code. Enter it here to give the TV your profiles, IPTV lines, My List and Continue Watching.")
+                        Text("On the TV, open NucFlix — it shows an 8-character code and a QR code. Enter the code here, or scan the QR code with your iPhone camera, to give the TV your profiles, IPTV lines, My List and Continue Watching.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         TextField("K7Q2M9XD", text: $code)
@@ -65,12 +66,26 @@ struct PairTVView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                            Spacer()
+                            Button("Remove", role: .destructive) { removing = tv }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(AppTheme.netflixRed)
                         }
                         .swipeActions {
-                            Button("Remove", role: .destructive) { Task { await cloud.removeTV(tv) } }
+                            Button("Remove", role: .destructive) { removing = tv }
                         }
                     }
                 }
+            }
+            .confirmationDialog("Remove \(removing?.name ?? "this TV")?", isPresented: Binding(
+                get: { removing != nil }, set: { if !$0 { removing = nil } }
+            ), titleVisibility: .visible) {
+                Button("Remove TV", role: .destructive) {
+                    guard let tv = removing else { return }
+                    Task { await cloud.removeTV(tv) }
+                }
+            } message: {
+                Text("It stops syncing with your account right away and shows a new pairing code.")
             }
             .navigationTitle("Pair a TV")
             .navigationBarTitleDisplayMode(.inline)

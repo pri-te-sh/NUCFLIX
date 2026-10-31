@@ -798,6 +798,13 @@ img.fit { object-fit: contain !important; object-position: center !important; }
   font-family: "NucBebas", Impact, sans-serif; font-size: 150px; letter-spacing: 22px; line-height: 1; color: #fff;
 }
 .pair-code i { display: inline-block; width: 46px; }
+.pair-methods { display: flex; align-items: center; gap: 56px; }
+.pair-method { display: flex; flex-direction: column; align-items: center; gap: 30px; }
+.pair-method .pair-steps { flex-direction: column; gap: 16px; align-items: flex-start; }
+.pair-or { font-size: 28px; font-weight: 700; color: rgba(255, 255, 255, 0.45); text-transform: uppercase; letter-spacing: 3px; }
+.pair-qr { border-radius: 14px; display: block; }
+.pair-qr-note { font-size: 24px; color: rgba(255, 255, 255, 0.75); }
+.pair-qr-note b { color: #fff; }
 .pair-expiry { font-size: 24px; color: rgba(255, 255, 255, 0.55); min-height: 30px; }
 .pair-actions { display: flex; gap: 22px; }
 .pair-note { max-width: 1000px; margin: 8px 0 0; font-size: 22px; color: rgba(255, 255, 255, 0.45); }

@@ -21,6 +21,13 @@ struct NucFlixApp: App {
                 .environment(appState)
                 .environment(cloud)
                 .onOpenURL { url in
+                    // nucflix://pair?code=K7Q2M9XD — the QR code a Fire TV shows while it waits to be paired.
+                    if url.scheme == "nucflix", url.host == "pair" {
+                        let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                            .queryItems?.first { $0.name == "code" }?.value ?? ""
+                        cloud.scannedPairCode = code.isEmpty ? nil : code
+                        return
+                    }
                     GIDSignIn.sharedInstance.handle(url)
                 }
         }

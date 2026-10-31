@@ -1421,6 +1421,21 @@
   // The TV signs in anonymously and shows a code; the household owner enters it in the NucFlix iPhone app
   // (Settings → Pair a TV). Xtream logins are never typed on, or saved to, the TV.
 
+  /** A QR code as inline SVG (vendor/qrcode.js), with the standard white quiet zone. */
+  function qrSVG(text, px) {
+    if (typeof qrcode !== 'function') return '';
+    const q = qrcode(0, 'M');
+    q.addData(text);
+    q.make();
+    const n = q.getModuleCount();
+    const quiet = 4;
+    const size = n + quiet * 2;
+    let d = '';
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + quiet} ${r + quiet}h1v1h-1z`;
+    return `<svg class="pair-qr" viewBox="0 0 ${size} ${size}" width="${px}" height="${px}" shape-rendering="crispEdges">`
+      + `<rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+  }
+
   const Pair = {
     code: null,
     expiresAt: 0,
@@ -1434,12 +1449,22 @@
         <div class="pair-page">
           ${wordmark('pair-word')}
           <h1>Pair this TV with your NucFlix account</h1>
-          <ol class="pair-steps">
-            <li>Open <b>NucFlix</b> on your iPhone</li>
-            <li>Go to <b>Settings → Pair a TV</b></li>
-            <li>Enter this code</li>
-          </ol>
-          <div class="pair-code">${code}</div>
+          <div class="pair-methods">
+            <div class="pair-method">
+              <ol class="pair-steps">
+                <li>Open <b>NucFlix</b> on your iPhone</li>
+                <li>Go to <b>Settings → Pair a TV</b></li>
+                <li>Enter this code</li>
+              </ol>
+              <div class="pair-code">${code}</div>
+            </div>
+            ${this.code ? `
+            <div class="pair-or">or</div>
+            <div class="pair-method qr">
+              ${qrSVG(`nucflix://pair?code=${this.code}`, 300)}
+              <div class="pair-qr-note">Scan with your <b>iPhone camera</b></div>
+            </div>` : ''}
+          </div>
           <div class="pair-expiry" id="pair-expiry">${this.error ? '' : this.expiryText()}</div>
           ${this.error ? `<div class="pair-error">${esc(this.error)}</div>` : ''}
           <div class="pair-actions">

@@ -6,6 +6,7 @@ struct RootView: View {
     @Environment(CloudAccount.self) var cloud
     /// Netflix-style animated intro, shown once per cold launch
     @State private var showSplash = true
+    @State private var pairResult: String?
 
     /// Changes whenever the session should (re)start: account, person profile, or the line's login.
     private var sessionKey: String {
@@ -57,6 +58,31 @@ struct RootView: View {
         .onChange(of: cloud.selectedProfile) { _, profile in
             // Settings changed on another device (e.g. the TV) apply here right away.
             if let profile, appState.activeProfileID == profile.id { appState.applyProfilePrefs(profile) }
+        }
+        // A scanned TV QR code (nucflix://pair?code=...): one tap to confirm, so a stray QR can't add a TV silently.
+        .alert("Pair this TV?", isPresented: Binding(
+            get: { cloud.scannedPairCode != nil && cloud.phase == .signedIn && !showSplash },
+            set: { if !$0 { cloud.scannedPairCode = nil } }
+        )) {
+            Button("Pair") {
+                let code = cloud.scannedPairCode ?? ""
+                cloud.scannedPairCode = nil
+                Task {
+                    if let name = await cloud.approvePairing(code: code) {
+                        pairResult = "\(name) is paired. Pick a profile on the TV to start watching."
+                    } else {
+                        pairResult = cloud.authError ?? "Couldn't pair the TV."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { cloud.scannedPairCode = nil }
+        } message: {
+            Text("The TV showing code \(cloud.scannedPairCode ?? "") will get your profiles, IPTV lines, My List and Continue Watching.")
+        }
+        .alert("Pair a TV", isPresented: Binding(get: { pairResult != nil }, set: { if !$0 { pairResult = nil } })) {
+            Button("OK", role: .cancel) { pairResult = nil }
+        } message: {
+            Text(pairResult ?? "")
         }
         .fullScreenCover(item: Bindable(appState).activePlayback) { item in
             IPTVPlayerView(item: item) {
