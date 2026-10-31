@@ -97,13 +97,16 @@ describe('profiles', () => {
     await assertSucceeds(deleteDoc(doc(phone(), 'users/owner/profiles/p1')));
   });
 
-  it('a paired TV may change prefs only', async () => {
+  it('a paired TV may add profiles and change prefs only', async () => {
     await pairedHousehold();
     await assertSucceeds(getDocs(collection(tv(), 'users/owner/profiles')));
     await assertSucceeds(updateDoc(doc(tv(), 'users/owner/profiles/p1'), { prefs: { autoplayNext: false }, updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(doc(tv(), 'users/owner/profiles/p1'), { name: 'Hacked' }));
     await assertFails(updateDoc(doc(tv(), 'users/owner/profiles/p1'), { kids: true }));
-    await assertFails(setDoc(doc(tv(), 'users/owner/profiles/p9'), PROFILE));
+    await assertSucceeds(setDoc(doc(tv(), 'users/owner/profiles/p9'), { ...PROFILE, name: 'Mom', kids: true }));
+    await assertFails(setDoc(doc(tv(), 'users/owner/profiles/p8'), { ...PROFILE, name: '' }));
+    await assertFails(setDoc(doc(tv(), 'users/owner/profiles/p7'), { ...PROFILE, admin: true }));
+    await assertFails(setDoc(doc(tv('tv2'), 'users/owner/profiles/p6'), PROFILE)); // not paired
     await assertFails(deleteDoc(doc(tv(), 'users/owner/profiles/p1')));
   });
 });
@@ -294,6 +297,16 @@ describe('AI markers and category tags', () => {
     await assertFails(getDoc(doc(phone('intruder'), 'users/owner/lineTags/L1')));
     await assertFails(setDoc(doc(phone(), 'users/owner/lineTags/L1'), { cats: {} }));
     await assertFails(setDoc(doc(tv(), 'users/owner/lineTags/L1'), { cats: {} }));
+  });
+
+  it('kids title scores are readable by the household and written only by Cloud Functions', async () => {
+    await pairedHousehold();
+    await seed(db => setDoc(doc(db, 'users/owner/kidsTitles/L1'), { titles: { 'movie:1': 0.95 } }));
+    await assertSucceeds(getDoc(doc(tv(), 'users/owner/kidsTitles/L1')));
+    await assertSucceeds(getDoc(doc(phone(), 'users/owner/kidsTitles/L1')));
+    await assertFails(getDoc(doc(phone('intruder'), 'users/owner/kidsTitles/L1')));
+    await assertFails(setDoc(doc(phone(), 'users/owner/kidsTitles/L1'), { titles: { 'movie:2': 1 } }));
+    await assertFails(setDoc(doc(tv(), 'users/owner/kidsTitles/L1'), { titles: { 'movie:2': 1 } }));
   });
 
   it('usage counters are never visible to apps', async () => {

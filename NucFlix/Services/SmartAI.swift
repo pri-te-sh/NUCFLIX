@@ -207,6 +207,87 @@ final class SmartAI {
         }
     }
 
+    // MARK: - Kids profiles
+
+    /// Deterministic kids rules, the same as the Fire TV app's. Layer 1: a category must not look mature, and must
+    /// look made for children or be judged kids-safe by the AI tags (untagged ones stay hidden). Layer 2: a title
+    /// must not be flagged adult or carry mature words / genres. Layer 3 is the AI title score below.
+    enum KidsRules {
+        nonisolated static let blockCategory = #"\b(adults?|xxx|porn|erotic|nsfw|uncensored|nude|sexy|horror|terror|slasher|gore|thriller|crime|war|mature|after dark|late night|ppv|ufc|wwe|mma|boxing)\b|18\s?\+"#
+        nonisolated static let allowCategory = #"\b(kids?|children'?s?|cartoons?|junior|jr|toddlers?|pre-?school|bab(y|ies)|nursery|family|nickelodeon|nick|cbeebies|boomerang|pogo)\b"#
+        nonisolated static let blockTitle = #"\b(xxx|porn|erotic|nsfw|uncensored|nude|sexy|horror|slasher|gore|adult|for adults)\b|18\s?\+"#
+        nonisolated static let blockGenre = #"\b(horror|thriller|crime|war|erotic|adult)\b"#
+        nonisolated static let badGenres: Set<String> = ["adult", "horror", "thriller", "crime"]
+
+        nonisolated static func matches(_ text: String, _ pattern: String) -> Bool {
+            text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+
+        nonisolated static func categoryOK(name: String, tag: CategoryTag?) -> Bool {
+            if matches(name, blockCategory) { return false }
+            if let tag, tag.adult > 0.3 || badGenres.contains(tag.genre ?? "") { return false }
+            return matches(name, allowCategory) || (tag?.kids ?? 0) >= 0.6
+        }
+
+        nonisolated static func titleOK(name: String, isAdult: Bool, genre: String?) -> Bool {
+            !isAdult && !matches(name, blockTitle) && !(genre.map { matches($0, blockGenre) } ?? false)
+        }
+    }
+
+    // Kids title scores (users/{uid}/kidsTitles/{lineId}, written by the kidsTitles function): 0-1, how suitable a
+    // title is for a child under 12. Kids profiles show only titles scored at least `kidsMinimum`.
+    nonisolated static let kidsMinimum = 0.6
+    private(set) var kidsScores: [String: Double] = [:]
+    private var kidsLineID: String?
+    private var kidsListener: ListenerRegistration?
+    private(set) var fillingKids = false
+
+    func kidsScore(_ kind: String, _ id: Int) -> Double? { kidsScores["\(kind):\(id)"] }
+
+    func startKids(lineID: String, onChange: @escaping () -> Void) {
+        if kidsLineID == lineID, kidsListener != nil { return }
+        stopKids()
+        guard let uid else { return }
+        kidsLineID = lineID
+        kidsListener = db.collection("users").document(uid).collection("kidsTitles").document(lineID)
+            .addSnapshotListener { [weak self] snap, _ in
+                Task { @MainActor in
+                    guard let self, self.kidsLineID == lineID else { return }
+                    let raw = snap?.data()?["titles"] as? [String: Any] ?? [:]
+                    let parsed = raw.compactMapValues { ($0 as? NSNumber)?.doubleValue }
+                    if parsed != self.kidsScores {
+                        self.kidsScores = parsed
+                        onChange()
+                    }
+                }
+            }
+    }
+
+    func stopKids() {
+        kidsListener?.remove()
+        kidsListener = nil
+        kidsLineID = nil
+        kidsScores = [:]
+    }
+
+    /// Sends titles without a score to the AI, 40 per call; `pending` ({kind, id, title}) is re-read every round.
+    func fillKids(lineID: String, pending: @escaping () -> [[String: Any]], done: @escaping () -> Void) {
+        guard !fillingKids, !disabled, kidsLineID == lineID else { return }
+        fillingKids = true
+        Task { @MainActor in
+            defer { fillingKids = false; done() }
+            for _ in 0..<400 {
+                guard kidsLineID == lineID, !disabled else { return }
+                let batch = Array(pending().filter { kidsScores["\($0["kind"] ?? ""):\($0["id"] ?? "")"] == nil }.prefix(40))
+                guard !batch.isEmpty else { return }
+                guard let res = await call("kidsTitles", ["lineId": lineID, "items": batch]) else { return }
+                for (key, value) in res["scores"] as? [String: Any] ?? [:] {
+                    if let n = value as? NSNumber { kidsScores[key] = n.doubleValue }
+                }
+            }
+        }
+    }
+
     // MARK: - Smart search
 
     struct SearchFilters: Equatable {

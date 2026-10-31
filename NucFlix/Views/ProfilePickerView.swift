@@ -1,17 +1,27 @@
 import SwiftUI
+import LocalAuthentication
 
 /// "Who's watching?" — the people profiles in the household account (synced with the TVs).
 struct ProfilePickerView: View {
     @Environment(CloudAccount.self) var cloud
     @State private var editing = false
     @State private var editorTarget: EditorTarget?
+    @State private var pinTarget: PinTarget?
+
+    /// What a PIN unlocks: opening or editing a locked profile, or adding one while others are locked.
+    private struct PinTarget: Identifiable {
+        enum Action { case open, edit, add }
+        let action: Action
+        let profile: CloudProfile?
+        var id: String { "\(action)-\(profile?.id ?? "")" }
+    }
 
     private struct EditorTarget: Identifiable {
         let profile: CloudProfile?
         var id: String { profile?.id ?? "new" }
     }
 
-    static let maxProfiles = 5
+    static let maxProfiles = 10
     private let columns = [GridItem(.adaptive(minimum: 120, maximum: 150), spacing: 26)]
 
     var body: some View {
@@ -41,7 +51,9 @@ struct ProfilePickerView: View {
                 LazyVGrid(columns: columns, spacing: 30) {
                     ForEach(cloud.profiles) { profile in
                         Button {
-                            if editing {
+                            if profile.isLocked {
+                                pinTarget = PinTarget(action: editing ? .edit : .open, profile: profile)
+                            } else if editing {
                                 editorTarget = EditorTarget(profile: profile)
                             } else {
                                 cloud.selectProfile(profile.id)
@@ -53,7 +65,12 @@ struct ProfilePickerView: View {
                     }
                     if cloud.profiles.count < Self.maxProfiles {
                         Button {
-                            editorTarget = EditorTarget(profile: nil)
+                            // With locked profiles, adding one needs one of their PINs (else it's a way around them).
+                            if cloud.profiles.contains(where: \.isLocked) {
+                                pinTarget = PinTarget(action: .add, profile: nil)
+                            } else {
+                                editorTarget = EditorTarget(profile: nil)
+                            }
                         } label: {
                             VStack(spacing: 10) {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -87,6 +104,128 @@ struct ProfilePickerView: View {
             ProfileEditorView(profile: target.profile)
                 .environment(cloud)
         }
+        .sheet(item: $pinTarget) { target in
+            let locked = target.profile.map { [$0] } ?? cloud.profiles.filter(\.isLocked)
+            PinPadView(
+                title: target.profile.map { "Enter \($0.name)'s PIN" } ?? "Enter a profile PIN",
+                subtitle: target.action == .add ? "Adding a profile needs the PIN of \(locked.map(\.name).joined(separator: " or "))." : nil,
+                onForgot: { unlockWithDeviceOwner { unlocked(target) } }
+            ) { pin in
+                guard locked.contains(where: { $0.pinMatches(pin) }) else { return .wrong }
+                unlocked(target)
+                return .done
+            }
+            .presentationDetents([.large])
+        }
+    }
+
+    private func unlocked(_ target: PinTarget) {
+        pinTarget = nil
+        switch target.action {
+        case .open: if let p = target.profile { cloud.selectProfile(p.id) }
+        case .edit: editorTarget = EditorTarget(profile: target.profile)
+        case .add: editorTarget = EditorTarget(profile: nil)
+        }
+    }
+
+    /// "Forgot PIN?": Face ID / Touch ID / the iPhone's passcode stands in for the PIN on the owner's phone.
+    private func unlockWithDeviceOwner(_ then: @escaping () -> Void) {
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { then(); return }
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Open a locked NucFlix profile") { ok, _ in
+            if ok { DispatchQueue.main.async(execute: then) }
+        }
+    }
+}
+
+/// 4-digit PIN keypad. `onPin` decides: `.done` closes, `.wrong` shakes and clears, `.message` shows the next step.
+struct PinPadView: View {
+    enum Result { case done, wrong, message(String) }
+
+    let title: String
+    var subtitle: String?
+    var onForgot: (() -> Void)?
+    let onPin: (String) -> Result
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var pin = ""
+    @State private var message = ""
+    @State private var shake = 0
+
+    var body: some View {
+        VStack(spacing: 26) {
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.foregroundStyle(.white.opacity(0.8))
+            }
+            Spacer()
+            Image(systemName: "lock.fill").font(.system(size: 30)).foregroundStyle(.white.opacity(0.8))
+            Text(title).font(.title2.weight(.semibold)).foregroundStyle(.white).multilineTextAlignment(.center)
+            if let subtitle { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center) }
+            HStack(spacing: 22) {
+                ForEach(0..<4, id: \.self) { i in
+                    Circle()
+                        .strokeBorder(.white.opacity(0.7), lineWidth: 2)
+                        .background(Circle().fill(i < pin.count ? Color.white : .clear))
+                        .frame(width: 18, height: 18)
+                }
+            }
+            .modifier(ShakeEffect(shakes: CGFloat(shake)))
+            .animation(.default, value: shake)
+            Text(message).font(.footnote).foregroundStyle(AppTheme.netflixRed).frame(height: 18)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(84), spacing: 22), count: 3), spacing: 18) {
+                ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "forgot", "0", "del"], id: \.self) { key in
+                    switch key {
+                    case "forgot":
+                        if let onForgot {
+                            Button("Forgot?") { onForgot() }.font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.7))
+                        } else { Color.clear.frame(height: 72) }
+                    case "del":
+                        Button { if !pin.isEmpty { pin.removeLast() } } label: {
+                            Image(systemName: "delete.left").font(.title2).foregroundStyle(.white).frame(width: 84, height: 72)
+                        }
+                    default:
+                        Button { press(key) } label: {
+                            Text(key).font(.system(size: 30, weight: .medium)).foregroundStyle(.white)
+                                .frame(width: 72, height: 72)
+                                .background(.white.opacity(0.12), in: Circle())
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(24)
+        .background(Color.black.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+    }
+
+    private func press(_ digit: String) {
+        guard pin.count < 4 else { return }
+        pin += digit
+        message = ""
+        guard pin.count == 4 else { return }
+        let entered = pin
+        pin = ""
+        switch onPin(entered) {
+        case .done: dismiss()
+        case .wrong:
+            message = "Wrong PIN. Try again."
+            shake += 1
+        case .message(let text): message = text
+        }
+    }
+}
+
+private struct ShakeEffect: GeometryEffect {
+    var shakes: CGFloat
+    var animatableData: CGFloat {
+        get { shakes }
+        set { shakes = newValue }
+    }
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 10 * sin(shakes * .pi * 4), y: 0))
     }
 }
 
@@ -156,6 +295,27 @@ struct ProfileAvatar: View {
     }
 }
 
+/// Asks for a new PIN twice, then hands it to `onChosen`.
+private struct PinChooser: View {
+    let onChosen: (String) -> Void
+    @State private var first: String?
+
+    var body: some View {
+        PinPadView(title: first == nil ? "Choose a 4-digit PIN" : "Enter the PIN again") { pin in
+            guard let chosen = first else {
+                first = pin
+                return .message("Enter the same PIN again")
+            }
+            guard pin == chosen else {
+                first = nil
+                return .message("Those PINs didn't match. Choose a PIN again.")
+            }
+            onChosen(pin)
+            return .done
+        }
+    }
+}
+
 /// Add or edit a person profile (name, colour, kids).
 struct ProfileEditorView: View {
     @Environment(CloudAccount.self) var cloud
@@ -166,6 +326,7 @@ struct ProfileEditorView: View {
     @State private var avatar = "red"
     @State private var kids = false
     @State private var confirmDelete = false
+    @State private var choosingPin = false
 
     var body: some View {
         NavigationStack {
@@ -199,6 +360,23 @@ struct ProfileEditorView: View {
                 } footer: {
                     Text("Kids profiles never show adult content.")
                 }
+                if let profile, !kids {
+                    Section {
+                        if lockedNow {
+                            Button("Change PIN") { choosingPin = true }
+                            Button("Turn Off Profile Lock", role: .destructive) {
+                                Task { await cloud.setProfilePin(profile, hash: "") }
+                            }
+                        } else {
+                            Button("Turn On Profile Lock") { choosingPin = true }
+                        }
+                    } header: {
+                        Text("Profile Lock")
+                    } footer: {
+                        Text(lockedNow ? "A 4-digit PIN is needed to open or edit this profile on every device."
+                             : "Ask for a 4-digit PIN to open this profile on the iPhone and your TVs.")
+                    }
+                }
                 if let error = cloud.authError {
                     Section { Text(error).foregroundStyle(AppTheme.primaryRed) }
                 }
@@ -225,6 +403,9 @@ struct ProfileEditorView: View {
                     .disabled(trimmed.isEmpty || cloud.isBusy)
                 }
             }
+            .sheet(isPresented: $choosingPin) {
+                if let profile { choosePinSheet(profile) }
+            }
             .confirmationDialog("Delete \(profile?.name ?? "")?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete Profile", role: .destructive) {
                     guard let profile else { return }
@@ -249,6 +430,16 @@ struct ProfileEditorView: View {
     }
 
     private var trimmed: String { String(name.trimmingCharacters(in: .whitespaces).prefix(40)) }
+
+    /// The live profile (the lock may change while the editor is open).
+    private var lockedNow: Bool { cloud.profiles.first { $0.id == profile?.id }?.isLocked ?? false }
+
+    @ViewBuilder
+    private func choosePinSheet(_ profile: CloudProfile) -> some View {
+        PinChooser { pin in
+            Task { await cloud.setProfilePin(profile, hash: CloudProfile.pinHash(profileID: profile.id, pin: pin)) }
+        }
+    }
 
     private var preview: CloudProfile {
         CloudProfile(id: "preview", data: ["name": trimmed.isEmpty ? "?" : trimmed, "avatar": avatar, "kids": kids])!

@@ -158,6 +158,7 @@ final class AppState {
         didSet {
             guard oldValue != showAdultContent else { return }
             UserDefaults.standard.set(showAdultContent, forKey: Keys.showAdultContent)
+            if !applyingProfilePrefs, !isKidsProfile { cloudSync?.savePrefs(["showAdult": showAdultContent]) }
             applyContentFilter()
         }
     }
@@ -253,7 +254,7 @@ final class AppState {
     var autoplayNextEpisode: Bool = true {
         didSet {
             UserDefaults.standard.set(autoplayNextEpisode, forKey: Keys.autoplayNextEpisode)
-            if oldValue != autoplayNextEpisode { cloudSync?.saveAutoplay(autoplayNextEpisode) }
+            if oldValue != autoplayNextEpisode, !applyingProfilePrefs { cloudSync?.savePrefs(["autoplayNext": autoplayNextEpisode]) }
         }
     }
 
@@ -643,6 +644,7 @@ final class AppState {
         aiHiddenSeriesCategoryIDs = []
         smartTagsTask?.cancel()
         SmartAI.shared.stopTags()
+        SmartAI.shared.stopKids()
         SmartAI.shared.reset()
         adultLiveStreamIDs = []
         adultMovieIDs = []
@@ -692,6 +694,18 @@ final class AppState {
 
     // MARK: - Cloud session (person profile + Xtream line from Firebase)
 
+    /// True while settings are being taken from the profile, so they aren't written straight back.
+    @ObservationIgnored private var applyingProfilePrefs = false
+
+    /// The profile's synced settings (Autoplay Next Episode, Show Adult Content), shared with the Fire TV.
+    /// Called on activation and whenever the profile document changes.
+    func applyProfilePrefs(_ profile: CloudProfile) {
+        applyingProfilePrefs = true
+        defer { applyingProfilePrefs = false }
+        autoplayNextEpisode = profile.autoplayNext
+        showAdultContent = !profile.kids && profile.showAdult
+    }
+
     /// Starts (or switches) the session for a person profile watching through an Xtream line. The line's
     /// login is only held in memory; favorites and watch progress come live from Firestore.
     func activate(line: CloudLine, profile: CloudProfile, uid: String) async {
@@ -705,10 +719,11 @@ final class AppState {
         activeProfileID = profile.id
         activeLineID = line.id
         isKidsProfile = profile.kids
+        startKidsScores()
         applySmartTags(immediately: true)
+        applyVisibleCategories()
         resetUserData()
-        autoplayNextEpisode = profile.autoplayNext
-        if profile.kids { showAdultContent = false }
+        applyProfilePrefs(profile)
         let sync = CloudSync(appState: self, uid: uid, profileID: profile.id, lineID: line.id)
         cloudSync = sync
         sync.start()
@@ -916,6 +931,7 @@ final class AppState {
             self.liveStreamsByCategory = merged
         }
         self.lastCatalogSyncDate = Date()
+        if isKidsProfile { applyVisibleCategories() } // the kids title check needs the full catalog
         scheduleHomeFeedRebuild(delay: 0)
         NotificationManager.shared.recordCatalogSynced(
             moviesCount: self.allMoviesCatalog.count,
@@ -1378,6 +1394,7 @@ final class AppState {
         let adultVodCats = adultVodCategoryIDs.union(aiHiddenVodCategoryIDs)
         let adultSeriesCats = adultSeriesCategoryIDs.union(aiHiddenSeriesCategoryIDs)
         let adultMovies = adultMovieIDs
+        let kids = kidsAllowed
         let rawMovies = allMoviesCatalog.isEmpty ? Array(vodStreamsByCategory.values.joined()) : allMoviesCatalog
         let rawSeries = allSeriesCatalog.isEmpty ? Array(seriesByCategory.values.joined()) : allSeriesCatalog
         let (safeMovies, safeSeries, safeMoviesByCat, safeSeriesByCat, safeEvents): ([XtreamVODStream], [XtreamSeries], [String: [XtreamVODStream]], [String: [XtreamSeries]], [TasteEvent])
@@ -1390,8 +1407,11 @@ final class AppState {
             (safeMovies, safeSeries, safeMoviesByCat, safeSeriesByCat, safeEvents) = await Task.detached(priority: .utility) {
                 let isAdultMovie: (XtreamVODStream) -> Bool = { m in
                     m.isAdult || adultMovies.contains(m.streamId.value) || adultVodCats.contains(m.categoryId?.value ?? "")
+                        || (kids.map { !$0.movie.contains(m.streamId.value) } ?? false)
                 }
-                let isAdultSeries: (XtreamSeries) -> Bool = { adultSeriesCats.contains($0.categoryId?.value ?? "") }
+                let isAdultSeries: (XtreamSeries) -> Bool = { s in
+                    adultSeriesCats.contains(s.categoryId?.value ?? "") || (kids.map { !$0.series.contains(s.seriesId.value) } ?? false)
+                }
                 return (
                     rawMovies.filter { !isAdultMovie($0) },
                     rawSeries.filter { !isAdultSeries($0) },
@@ -1459,21 +1479,24 @@ final class AppState {
     }
 
     func isAdultContent(_ channel: XtreamLiveStream) -> Bool {
-        channel.isAdult
+        kidsHidden("live", channel.streamId.value)
+            || channel.isAdult
             || adultLiveStreamIDs.contains(channel.streamId.value)
             || adultLiveCategoryIDs.contains(channel.categoryId?.value ?? "")
             || aiHiddenLiveCategoryIDs.contains(channel.categoryId?.value ?? "")
     }
 
     func isAdultContent(_ movie: XtreamVODStream) -> Bool {
-        movie.isAdult
+        kidsHidden("movie", movie.streamId.value)
+            || movie.isAdult
             || adultMovieIDs.contains(movie.streamId.value)
             || adultVodCategoryIDs.contains(movie.categoryId?.value ?? "")
             || aiHiddenVodCategoryIDs.contains(movie.categoryId?.value ?? "")
     }
 
     func isAdultContent(_ series: XtreamSeries) -> Bool {
-        adultSeriesCategoryIDs.contains(series.categoryId?.value ?? "")
+        kidsHidden("series", series.seriesId.value)
+            || adultSeriesCategoryIDs.contains(series.categoryId?.value ?? "")
             || aiHiddenSeriesCategoryIDs.contains(series.categoryId?.value ?? "")
     }
 
@@ -1482,14 +1505,17 @@ final class AppState {
         guard !showAdultContent else { return false }
         switch entry.contentType {
         case .live:
+            if let sid = entry.streamID, kidsHidden("live", sid) { return true }
             return entry.streamID.map { adultLiveStreamIDs.contains($0) } ?? false
         case .movie:
-            guard let sid = entry.streamID else { return false }
-            if adultMovieIDs.contains(sid) { return true }
+            guard let sid = entry.streamID else { return kidsAllowed != nil }
+            if kidsHidden("movie", sid) || adultMovieIDs.contains(sid) { return true }
             if let movie = movieByID(sid) { return isAdultContent(movie) }
             return false
         case .seriesEpisode:
-            guard let seriesID = entry.seriesID, let series = seriesByID(seriesID) else { return false }
+            guard let seriesID = entry.seriesID else { return kidsAllowed != nil }
+            if kidsHidden("series", seriesID) { return true }
+            guard let series = seriesByID(seriesID) else { return false }
             return isAdultContent(series)
         }
     }
@@ -1585,6 +1611,7 @@ final class AppState {
     }
 
     private func applyVisibleCategories() {
+        applyKidsTitles()
         if showAdultContent {
             liveCategories = rawLiveCategories
             vodCategories = rawVodCategories
@@ -1612,7 +1639,77 @@ final class AppState {
         ]) { [weak self] in
             self?.applySmartTags()
         }
+        startKidsScores()
         applySmartTags(immediately: true)
+    }
+
+    /// Kids profiles follow the line's AI title scores; other profiles don't need them.
+    private func startKidsScores() {
+        if isKidsProfile, let lineID = activeLineID {
+            SmartAI.shared.startKids(lineID: lineID) { [weak self] in self?.kidsScoresChanged() }
+        } else {
+            SmartAI.shared.stopKids()
+        }
+    }
+
+    // MARK: - Kids profiles (titles)
+
+    /// Kids profiles: the titles they may see (in a kids-visible category, passing the rules and the AI check).
+    /// nil for other profiles. Titles that pass the rules but have no AI score yet wait in `kidsPending`.
+    @ObservationIgnored private var kidsAllowed: (live: Set<Int>, movie: Set<Int>, series: Set<Int>)?
+    @ObservationIgnored private var kidsPending: [[String: Any]] = []
+    @ObservationIgnored private var kidsTask: Task<Void, Never>?
+
+    private func applyKidsTitles() {
+        guard isKidsProfile else { kidsAllowed = nil; kidsPending = []; return }
+        let ai = SmartAI.shared
+        var pending: [[String: Any]] = []
+        func allowed(_ kind: String, _ items: [(id: Int, name: String, cat: String, adult: Bool, genre: String?)], hiddenCats: Set<String>) -> Set<Int> {
+            var ok = Set<Int>()
+            for item in items where !hiddenCats.contains(item.cat) {
+                guard SmartAI.KidsRules.titleOK(name: item.name, isAdult: item.adult, genre: item.genre) else { continue }
+                if let score = ai.kidsScore(kind, item.id) {
+                    if score >= SmartAI.kidsMinimum { ok.insert(item.id) }
+                } else if !item.name.isEmpty {
+                    pending.append(["kind": kind, "id": item.id, "title": String(item.name.prefix(160))])
+                }
+            }
+            return ok
+        }
+        let series = allowed("series", allLoadedSeries.map { ($0.seriesId.value, $0.name, $0.categoryId?.value ?? "", false, $0.genre) },
+                             hiddenCats: adultSeriesCategoryIDs.union(aiHiddenSeriesCategoryIDs))
+        let movies = allowed("movie", allLoadedMovies.map { ($0.streamId.value, $0.name, $0.categoryId?.value ?? "", $0.isAdult, nil) },
+                             hiddenCats: adultVodCategoryIDs.union(aiHiddenVodCategoryIDs))
+        let live = allowed("live", allLoadedLiveStreams.filter { !$0.isSectionDivider }
+                            .map { ($0.streamId.value, $0.name, $0.categoryId?.value ?? "", $0.isAdult, nil) },
+                           hiddenCats: adultLiveCategoryIDs.union(aiHiddenLiveCategoryIDs))
+        kidsAllowed = (live, movies, series)
+        kidsPending = pending
+        if !pending.isEmpty, let lineID = activeLineID, !ai.fillingKids {
+            ai.fillKids(lineID: lineID, pending: { [weak self] in self?.kidsPending ?? [] }) { [weak self] in
+                self?.kidsScoresChanged()
+            }
+        }
+    }
+
+    /// New AI scores: re-filter (batched, so the screen doesn't reshuffle on every answer).
+    private func kidsScoresChanged() {
+        kidsTask?.cancel()
+        kidsTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, !Task.isCancelled, self.isKidsProfile else { return }
+            self.applyContentFilter()
+        }
+    }
+
+    /// Kids profiles only see titles in `kidsAllowed`.
+    private func kidsHidden(_ kind: String, _ id: Int) -> Bool {
+        guard let allowed = kidsAllowed else { return false }
+        switch kind {
+        case "live": return !allowed.live.contains(id)
+        case "movie": return !allowed.movie.contains(id)
+        default: return !allowed.series.contains(id)
+        }
     }
 
     /// Recomputes which categories the tags hide; re-filters the catalog (debounced) when that changed.
@@ -1620,8 +1717,9 @@ final class AppState {
         let kids = isKidsProfile
         func hidden(_ kind: String, _ cats: [XtreamCategory]) -> Set<String> {
             Set(cats.filter { cat in
-                guard let tag = SmartAI.shared.tag(kind, cat.id) else { return false }
-                return tag.adult > 0.7 || (kids && tag.kids < 0.5)
+                let tag = SmartAI.shared.tag(kind, cat.id)
+                if let tag, tag.adult > 0.7 || tag.genre == "adult" { return true }
+                return kids && !SmartAI.KidsRules.categoryOK(name: cat.categoryName, tag: tag)
             }.map(\.id))
         }
         let live = hidden("live", rawLiveCategories)

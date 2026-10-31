@@ -54,6 +54,10 @@ struct RootView: View {
             }
             await appState.activate(line: line, profile: profile, uid: uid)
         }
+        .onChange(of: cloud.selectedProfile) { _, profile in
+            // Settings changed on another device (e.g. the TV) apply here right away.
+            if let profile, appState.activeProfileID == profile.id { appState.applyProfilePrefs(profile) }
+        }
         .fullScreenCover(item: Bindable(appState).activePlayback) { item in
             IPTVPlayerView(item: item) {
                 appState.activePlayback = nil

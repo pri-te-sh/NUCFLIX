@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import CryptoKit
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
@@ -70,7 +71,20 @@ struct CloudProfile: Identifiable, Equatable, Hashable {
     var avatar: String
     var kids: Bool
     var order: Int
+    // Synced settings (prefs map), shared with the Fire TV app.
     var autoplayNext: Bool
+    var showAdult: Bool
+    /// Profile Lock: SHA-256 of "nucflix-pin:<profileId>:<pin>" (same as the Fire TV app), empty when off.
+    var pinHash: String
+
+    /// Standard profiles may have a 4-digit PIN; kids profiles never do.
+    var isLocked: Bool { !kids && !pinHash.isEmpty }
+
+    static func pinHash(profileID: String, pin: String) -> String {
+        SHA256.hash(data: Data("nucflix-pin:\(profileID):\(pin)".utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func pinMatches(_ pin: String) -> Bool { isLocked && Self.pinHash(profileID: id, pin: pin) == pinHash }
 
     static let avatarColors = ["red", "blue", "green", "yellow", "purple", "orange", "teal", "pink"]
 
@@ -83,6 +97,8 @@ struct CloudProfile: Identifiable, Equatable, Hashable {
         self.order = data["order"] as? Int ?? 0
         let prefs = data["prefs"] as? [String: Any] ?? [:]
         self.autoplayNext = prefs["autoplayNext"] as? Bool ?? true
+        self.showAdult = !kids && (prefs["showAdult"] as? Bool ?? false)
+        self.pinHash = prefs["pinHash"] as? String ?? ""
     }
 }
 
@@ -385,6 +401,13 @@ final class CloudAccount {
             ok = true
         }
         return ok ? ref.documentID : nil
+    }
+
+    /// Turns Profile Lock on (a PIN's hash, see `CloudProfile.pinHash`) or off (empty).
+    func setProfilePin(_ profile: CloudProfile, hash: String) async {
+        guard let uid else { return }
+        let ref = db.collection("users").document(uid).collection("profiles").document(profile.id)
+        await run { try await ref.setData(["prefs": ["pinHash": hash], "updatedAt": FieldValue.serverTimestamp()], merge: true) }
     }
 
     /// Deletes the profile and everything it watched or saved.

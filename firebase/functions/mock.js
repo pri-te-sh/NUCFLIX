@@ -33,7 +33,10 @@ function categoryAnswers(body) {
   for (const [key, q] of Object.entries(body.questions)) {
     const [kind, i] = key.split('_');
     const name = names[i] || '';
-    if (kind === 'kids') answers[key] = { type: 'noul', noul: /kid|cartoon|junior|family|disney|anime/i.test(name) ? 0.93 : 0.07 };
+    if (kind === 'title') {
+      // Fake catalogs: titles ending in 7, and anything adult or scary, are judged unsuitable for kids.
+      answers[key] = { type: 'noul', noul: /xxx|adult|porn|horror|deadpool|family guy|south park|7(\D*)$/i.test(name) ? 0.04 : 0.91 };
+    } else if (kind === 'kids') answers[key] = { type: 'noul', noul: /kid|cartoon|junior|family|disney|anime/i.test(name) ? 0.93 : 0.07 };
     else if (kind === 'adult') answers[key] = { type: 'noul', noul: /adult|xxx|18\+/i.test(name) ? 0.97 : 0.02 };
     else if (kind === 'lang') {
       const prefix = (name.match(/^([A-Za-z]{2,3})\b/) || [])[1]?.toLowerCase();

@@ -260,6 +260,50 @@ export const classifyCategories = onCall(options, async request => {
   return { tags };
 });
 
+// ------------------------------------------------------------------ kidsTitles
+
+const MAX_TITLES = 40;
+
+/**
+ * Rates titles for kids profiles: 0-1, how suitable each is for a child under 12 to watch alone. The apps only
+ * show a kids profile titles scored at least 0.6, on top of their deterministic rules, so unknown titles stay
+ * hidden. Scores are shared by the household's kids profiles in users/{owner}/kidsTitles/{lineId}.
+ */
+export const kidsTitles = onCall(options, async request => {
+  const owner = await household(request);
+  const lineId = String(request.data?.lineId || '');
+  const items = request.data?.items;
+  if (!/^[\w-]{1,60}$/.test(lineId)) throw new HttpsError('invalid-argument', 'Bad line.');
+  if (!Array.isArray(items) || !items.length || items.length > MAX_TITLES
+      || !items.every(t => /^\d{1,12}$/.test(String(t?.id ?? '')) && str(t?.title, 160) && ['live', 'movie', 'series'].includes(t?.kind))) {
+    throw new HttpsError('invalid-argument', `Send 1-${MAX_TITLES} titles {kind, id, title}.`);
+  }
+  if (!(await db.doc(`users/${owner}/lines/${lineId}`).get()).exists) throw new HttpsError('not-found', 'Unknown line.');
+  await spend(owner, 1);
+
+  const state = 'Titles from an IPTV catalog: movies, TV series and live TV channels. Names may carry a country or '
+    + 'language prefix (EN, UK, IN...), a year or quality tags (HD, 4K).\n'
+    + items.map((t, i) => `${i}. [${t.kind}] ${t.title}`).join('\n');
+  const questions = {};
+  items.forEach((t, i) => {
+    questions[`title_${i}`] = {
+      type: 'noul',
+      instructions: `Is title ${i} ("${t.title}") suitable for a child under 12 to watch alone?`,
+      criteria: {
+        false: 'Made for adults or teens: sexual content, strong violence, horror, crude adult humour (e.g. adult animation), '
+          + 'mature news or talk, or a title you don\'t recognise',
+        true: 'Made for children or the whole family; a typical parent would let a young child watch it'
+      }
+    };
+  });
+  const answers = await decide(state, questions);
+
+  const scores = {};
+  items.forEach((t, i) => { scores[`${t.kind}:${t.id}`] = round(answers[`title_${i}`]?.noul ?? 0); });
+  await db.doc(`users/${owner}/kidsTitles/${lineId}`).set({ titles: scores, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { scores };
+});
+
 // ------------------------------------------------------------------ smartSearch
 
 const KINDS = ['movie', 'series', 'live', 'any'];

@@ -122,6 +122,54 @@ const Smart = (() => {
     }
   };
 
+  // ---------------------------------------------------------------- kids profiles
+
+  // Kids profiles see a title only once the AI scored it suitable for a child under 12 (see the kidsTitles
+  // function); the app's deterministic rules run first, so only titles that pass them are sent here.
+  const KIDS_MIN = 0.6;
+  const Kids = {
+    lineId: null,
+    map: {},
+    running: false,
+
+    /** Follows the line's scores (onChange on every update). Resolves once the saved scores have been read. */
+    start(lineId, onChange) {
+      this.lineId = lineId;
+      return Cloud.watchKidsTitles(lineId, map => {
+        if (this.lineId !== lineId) return;
+        this.map = map;
+        onChange(map);
+      });
+    },
+
+    stop() {
+      this.lineId = null;
+      this.map = {};
+      Cloud.watchKidsTitles(null, null);
+    },
+
+    /** null = not checked yet. */
+    score(kind, id) { const s = this.map[`${kind}:${id}`]; return s == null ? null : s; },
+    ok(kind, id) { const s = this.score(kind, id); return s != null && s >= KIDS_MIN; },
+
+    /** Checks titles that have no score yet, 40 per call; pending() is re-read each round as scores arrive. */
+    async fill(lineId, pending) {
+      if (this.running || disabled) return;
+      this.running = true;
+      try {
+        for (let round = 0; round < 400 && this.lineId === lineId && !disabled; round++) {
+          const batch = pending().filter(t => this.score(t.kind, t.id) == null).slice(0, 40);
+          if (!batch.length) break;
+          const res = await call('kidsTitles', { lineId, items: batch });
+          if (!res) break;
+          Object.assign(this.map, res.scores || {});
+        }
+      } finally {
+        this.running = false;
+      }
+    }
+  };
+
   // ---------------------------------------------------------------- smart search
 
   const searchCache = new Map();
@@ -184,5 +232,5 @@ const Smart = (() => {
     return parts.charAt(0).toUpperCase() + parts.slice(1) + (years ? `, ${years}` : '') + words;
   }
 
-  return { frame, onFrame, frameCheck, alternatives, Tags, searchFilters, applyFilters, describe, recent, get disabled() { return disabled; } };
+  return { frame, onFrame, frameCheck, alternatives, Tags, Kids, searchFilters, applyFilters, describe, recent, get disabled() { return disabled; } };
 })();

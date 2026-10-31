@@ -153,8 +153,9 @@ final class CloudSync {
         batch.commit()
     }
 
-    func saveAutoplay(_ on: Bool) {
-        profileRef.setData(["prefs": ["autoplayNext": on], "updatedAt": FieldValue.serverTimestamp()], merge: true)
+    /// Writes the profile's synced settings (keys of its prefs map), e.g. ["showAdult": true].
+    func savePrefs(_ prefs: [String: Any]) {
+        profileRef.setData(["prefs": prefs, "updatedAt": FieldValue.serverTimestamp()], merge: true)
     }
 
     // MARK: Document shapes

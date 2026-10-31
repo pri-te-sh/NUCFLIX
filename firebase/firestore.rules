@@ -4,13 +4,14 @@ rules_version = '2';
 //
 // users/{uid}                          household account (uid = the signed-in phone user, Google or email)
 //   lines/{lineId}                     Xtream logins; written from the phone only, readable by paired TVs
-//   profiles/{profileId}               people (you, kids, ...); TVs may only change a profile's prefs
+//   profiles/{profileId}               people (you, kids, ...); TVs may add one, and change only a profile's prefs
 //     progress/{contentKey}            watch position per title, contentKey = "<lineId>:<kind>:<id>"
 //     favorites/{contentKey}           My List / favourite channels
 //   members/{deviceUid}                paired TVs (anonymous Firebase users) allowed into this household
 //   devices/{deviceUid}                presence + "now playing" per device
 //   markers/{contentKey}               where credits start / the intro ends, found once and shared by every device
 //   lineTags/{lineId}                  AI category tags (kids-safe, adult, language, genre); written by Cloud Functions
+//   kidsTitles/{lineId}                AI kids-suitability score per title, for kids profiles; written by Cloud Functions
 // aiUsage/{uid}                        daily AI call counters (Cloud Functions only)
 // pairing/{code}                       short-lived TV pairing codes (TV creates, phone approves)
 
@@ -86,7 +87,8 @@ service cloud.firestore {
 
       match /profiles/{profileId} {
         allow read: if canAccess(uid);
-        allow create: if isOwner(uid) && validProfile(request.resource.data);
+        // Paired TVs may add profiles too; renaming and deleting stay with the phone.
+        allow create: if canAccess(uid) && validProfile(request.resource.data);
         allow update: if validProfile(request.resource.data)
           && (isOwner(uid)
               || (isMember(uid)
@@ -125,6 +127,12 @@ service cloud.firestore {
 
       // AI category tags per line; only the classifyCategories function (Admin SDK) writes them.
       match /lineTags/{lineId} {
+        allow read: if canAccess(uid);
+        allow write: if false;
+      }
+
+      // Kids-suitability scores per title; only the kidsTitles function (Admin SDK) writes them.
+      match /kidsTitles/{lineId} {
         allow read: if canAccess(uid);
         allow write: if false;
       }

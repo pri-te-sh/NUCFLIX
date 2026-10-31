@@ -94,6 +94,30 @@ describe('classifyCategories', () => {
   });
 });
 
+describe('kidsTitles', () => {
+  it('scores titles for kids and saves them for the household', async () => {
+    const { scores } = await tvPaired.call('kidsTitles', {
+      ownerUid, lineId: 'L1',
+      items: [
+        { kind: 'series', id: 11, title: 'Peppa Pig' },
+        { kind: 'movie', id: 12, title: 'Deadpool (2016)' },
+        { kind: 'live', id: 13, title: 'XXX Hot TV' }
+      ]
+    });
+    assert.ok(scores['series:11'] >= 0.6);
+    assert.ok(scores['movie:12'] < 0.6 && scores['live:13'] < 0.6);
+    const saved = (await getDoc(doc(owner.db, `users/${ownerUid}/kidsTitles/L1`))).data();
+    assert.deepEqual(Object.keys(saved.titles).sort(), ['live:13', 'movie:12', 'series:11']);
+  });
+
+  it('refuses bad titles, unknown lines and oversized batches', async () => {
+    await rejects(owner.call('kidsTitles', { lineId: 'nope', items: [{ kind: 'movie', id: 1, title: 'x' }] }), 'not-found');
+    await rejects(owner.call('kidsTitles', { lineId: 'L1', items: [{ kind: 'movie', id: 'abc', title: 'x' }] }), 'invalid-argument');
+    const many = Array.from({ length: 41 }, (_, i) => ({ kind: 'movie', id: i, title: `Movie ${i}` }));
+    await rejects(owner.call('kidsTitles', { lineId: 'L1', items: many }), 'invalid-argument');
+  });
+});
+
 describe('smartSearch', () => {
   it('turns a request into filters', async () => {
     const f = await owner.call('smartSearch', { query: 'funny Hindi movies from the 2010s' });

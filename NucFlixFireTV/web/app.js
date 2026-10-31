@@ -120,6 +120,7 @@
       // Categories the adult / kids filter took out (so taste events from them can be ignored too).
       blockedCats: { live: new Set(), movie: new Set(), series: new Set() },
       catName: { live: {}, vod: {}, series: {} },
+      kidsPending: [], // kids profiles: titles still waiting for their AI check
       index: new CatalogSearchIndex()
     };
   }
@@ -572,7 +573,7 @@
       el.classList.add('focusable');
       const name = el.getAttribute('data-nav');
       el.setAttribute('data-fk', 'nav-' + name);
-      el._act = () => goTab(name);
+      el._act = name === 'account' ? () => profileMenu() : () => goTab(name);
     });
   }
 
@@ -584,6 +585,28 @@
   // ------------------------------------------------------------------ Catalog loading & adult filter
 
   const ADULT_RE = /\b(adult|xxx|18\+|porn|erotic|for adults)\b/i;
+
+  // Kids profiles, layer 1 (deterministic, by name). A category must not look mature, and must either look
+  // made for children or be judged kids-safe by the AI category tags; untagged categories stay hidden.
+  const KIDS_BLOCK_CAT_RE = /\b(adults?|xxx|porn|erotic|nsfw|uncensored|nude|sexy|horror|terror|slasher|gore|thriller|crime|war|mature|after dark|late night|ppv|ufc|wwe|mma|boxing)\b|18\s?\+/i;
+  const KIDS_ALLOW_CAT_RE = /\b(kids?|children'?s?|cartoons?|junior|jr|toddlers?|pre-?school|bab(y|ies)|nursery|family|nickelodeon|nick|cbeebies|boomerang|pogo)\b/i;
+  const KIDS_BAD_GENRES = ['adult', 'horror', 'thriller', 'crime'];
+  // Layer 2 (deterministic, per title): adult flag, mature words in the name, or a mature genre.
+  const KIDS_BLOCK_TITLE_RE = /\b(xxx|porn|erotic|nsfw|uncensored|nude|sexy|horror|slasher|gore)\b|18\s?\+/i;
+  const KIDS_BLOCK_GENRE_RE = /\b(horror|thriller|crime|war|erotic|adult)\b/i;
+  // Layer 3 (AI, per title): Smart.Kids, the kidsTitles function's score; titles not checked yet stay hidden.
+
+  function kidsCategoryOk(name, tag) {
+    if (KIDS_BLOCK_CAT_RE.test(name) || ADULT_RE.test(name)) return false;
+    if (tag && (tag.adult > 0.3 || KIDS_BAD_GENRES.includes(tag.genre))) return false;
+    return KIDS_ALLOW_CAT_RE.test(name) || (!!tag && tag.kids >= 0.6);
+  }
+
+  /** Layers 1-2 for one title; the AI score (layer 3) is checked separately. */
+  function kidsTitleRulesOk(x) {
+    return !x.isAdult && !KIDS_BLOCK_TITLE_RE.test(x.name || '') && !ADULT_RE.test(x.name || '')
+      && !(x.genre && KIDS_BLOCK_GENRE_RE.test(x.genre));
+  }
 
   async function loadCatalog() {
     const c = S.creds;
@@ -739,13 +762,12 @@
     const showAdult = S.prefs.showAdult;
     const cat = emptyCatalog();
     cat.version = S.cat.version + 1;
-    // Adult categories: by name, plus the AI tags (Smart.Tags). Kids profiles also drop every category the
-    // AI judged unsuitable for young children.
+    // Adult categories: by name, plus the AI tags (Smart.Tags). Kids profiles get the three kids layers above.
     const kids = isKids();
     const hidden = (kind, x) => {
       const tag = Smart.Tags.get(kind, x.categoryId);
       if (!showAdult && (ADULT_RE.test(x.categoryName) || (tag && (tag.adult > 0.7 || tag.genre === 'adult')))) return true;
-      return kids && !!tag && tag.kids < 0.5;
+      return kids && !kidsCategoryOk(x.categoryName || '', tag);
     };
     const blocked = { live: new Set(), movie: new Set(), series: new Set() };
     const filterCats = (kind, list) => list.filter(x => {
@@ -756,11 +778,22 @@
     cat.liveCats = filterCats('live', r.liveCats);
     cat.vodCats = filterCats('movie', r.vodCats);
     cat.seriesCats = filterCats('series', r.seriesCats);
-    const ok = kind => x => (showAdult && !kids) || (!(x.isAdult && !showAdult) && !blocked[kind].has(x.categoryId));
-    cat.live = r.live.filter(x => !x.isSectionDivider && ok('live')(x));
-    cat.movies = r.movies.filter(ok('movie'));
+    // Kids: titles that pass the rules but have no AI score yet wait in kidsPending (checked in the background).
+    const pending = [];
+    const kidsOk = (kind, x) => {
+      if (!kidsTitleRulesOk(x)) return false;
+      const id = kind === 'series' ? x.seriesId : x.streamId;
+      if (Smart.Kids.ok(kind, id)) return true;
+      if (Smart.Kids.score(kind, id) == null) pending.push({ kind, id, title: String(x.name || x.cleanName || '').slice(0, 160) });
+      return false;
+    };
+    const ok = kind => x => (showAdult && !kids) || (!(x.isAdult && !showAdult) && !blocked[kind].has(x.categoryId)
+      && (!kids || kidsOk(kind, x)));
     cat.series = r.series.filter(ok('series'));
+    cat.movies = r.movies.filter(ok('movie'));
+    cat.live = r.live.filter(x => !x.isSectionDivider && ok('live')(x));
     cat.blockedCats = blocked;
+    cat.kidsPending = pending.filter(t => t.title);
     cat.live.forEach(x => cat.liveById.set(x.streamId, x));
     cat.movies.forEach(x => cat.movieById.set(x.streamId, x));
     cat.series.forEach(x => cat.seriesById.set(x.seriesId, x));
@@ -1482,17 +1515,8 @@
 
     render() {
       const profiles = S.cloud.profiles;
-      const tiles = profiles.map(p => `
-        <div class="who-tile focusable" data-fk="who-${esc(p.id)}" ${act(() => activateProfile(p))}>
-          <div class="who-avatar" style="background:${AVATAR_COLORS[p.avatar] || AVATAR_COLORS.red}">
-            ${esc(initial(p.name))}
-            ${p.kids ? '<span class="who-kids">KIDS</span>' : ''}
-          </div>
-          <div class="who-name">${esc(p.name)}</div>
-        </div>`).join('');
-      const notice = !profiles.length
-        ? 'Create a profile in the NucFlix iPhone app to start watching.'
-        : !S.cloud.lines.length ? 'Add an IPTV line in the NucFlix iPhone app (Settings → IPTV Lines) to start watching.' : '';
+      const tiles = profileTiles('who', p => openProfile(p), true);
+      const notice = !S.cloud.lines.length ? 'Add an IPTV line in the NucFlix iPhone app (Settings → IPTV Lines) to start watching.' : '';
       mount($('#who-screen'), `
         <div class="who-page">
           ${wordmark('who-word')}
@@ -1516,6 +1540,202 @@
   };
   Screens.who = Who;
 
+  const MAX_PROFILES = 10; // same limit as the iPhone app
+
+  const LOCK_ICON = '<svg viewBox="0 0 24 24" class="ico"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+
+  /** Avatar tiles for "Who's watching?" and the switcher; `withAdd` appends the Add Profile tile. */
+  function profileTiles(prefix, onPick, withAdd) {
+    const cur = S.cloud.profile;
+    return S.cloud.profiles.map(p => `
+        <div class="who-tile focusable ${prefix === 'sw' && cur && cur.id === p.id ? 'current' : ''}" data-fk="${prefix}-${esc(p.id)}" ${act(() => onPick(p))}>
+          <div class="who-avatar" style="background:${AVATAR_COLORS[p.avatar] || AVATAR_COLORS.red}">
+            ${esc(initial(p.name))}
+            ${p.kids ? '<span class="who-kids">KIDS</span>' : ''}
+            ${isLocked(p) ? `<span class="who-lock">${LOCK_ICON}</span>` : ''}
+          </div>
+          <div class="who-name">${esc(p.name)}</div>
+        </div>`).join('') + (withAdd && S.cloud.profiles.length < MAX_PROFILES ? `
+        <div class="who-tile add focusable" data-fk="${prefix}-add" ${act(() => addProfile())}>
+          <div class="who-avatar">+</div>
+          <div class="who-name">Add Profile</div>
+        </div>` : '');
+  }
+
+  /** The nav avatar: the same avatars as "Who's watching?" over the current screen, plus Settings. */
+  function profileMenu() {
+    const cur = S.cloud.profile;
+    Modal.open(`
+      <div class="who-page switcher">
+        ${wordmark('who-word')}
+        <h1>Switch profile</h1>
+        <div class="who-grid" data-group="switch">${profileTiles('sw', p => {
+          if (cur && p.id === cur.id) { Modal.close(); return; }
+          openProfile(p, () => Modal.closeAll());
+        }, !isKids())}</div>
+        <div class="who-footer">
+          <div class="tv-btn small focusable" data-fk="sw-settings" ${act(() => { Modal.close(); goTab('account'); })}>${ICON.gear || ''}Settings</div>
+        </div>
+      </div>`, { focus: cur ? `[data-fk="sw-${CSS.escape(cur.id)}"]` : '.who-tile' });
+  }
+
+  // ---- profile lock: an optional 4-digit PIN on standard profiles, kept as a salted hash in the profile's prefs
+
+  const isLocked = p => !!p && !p.kids && !!(p.prefs && p.prefs.pinHash);
+
+  async function pinHash(profileId, pin) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`nucflix-pin:${profileId}:${pin}`));
+    return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function pinMatches(p, pin) { return isLocked(p) && (await pinHash(p.id, pin)) === p.prefs.pinHash; }
+
+  /**
+   * D-pad PIN keypad. onPin(pin) resolves true to close, false to say "Wrong PIN" (shake and clear), or a
+   * string to show as the next instruction (and clear), e.g. "Enter the same PIN again".
+   */
+  function pinPad({ title, subtitle, onPin }) {
+    let pin = '';
+    let busy = false;
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
+    const wrap = Modal.open(`
+      <div class="modal-sheet narrow pin-sheet">
+        <h2 class="modal-title">${esc(title)}</h2>
+        ${subtitle ? `<p class="modal-sub">${esc(subtitle)}</p>` : ''}
+        <div class="pin-dots"><i></i><i></i><i></i><i></i></div>
+        <div class="pin-msg"></div>
+        <div class="pin-pad" data-group="pin">${keys.map(k => k === '' ? '<div class="pin-key blank"></div>' : `
+          <div class="pin-key focusable" data-fk="pin-${k}" ${act(() => press(k))}>${k === 'del' ? '⌫' : k}</div>`).join('')}</div>
+      </div>`, { focus: '[data-fk="pin-5"]' });
+    const dots = () => wrap.querySelectorAll('.pin-dots i').forEach((d, i) => d.classList.toggle('on', i < pin.length));
+    const say = msg => { wrap.querySelector('.pin-msg').textContent = msg || ''; };
+    async function press(k) {
+      if (busy) return;
+      if (k === 'del') { pin = pin.slice(0, -1); dots(); return; }
+      if (pin.length >= 4) return;
+      pin += k;
+      say('');
+      dots();
+      if (pin.length < 4) return;
+      busy = true;
+      const res = await onPin(pin);
+      busy = false;
+      if (res === true) { if (Modal.stack.length && Modal.stack[Modal.stack.length - 1].wrap === wrap) Modal.close(); return; }
+      pin = '';
+      dots();
+      say(typeof res === 'string' ? res : 'Wrong PIN. Try again.');
+      if (res !== false) return;
+      const box = wrap.querySelector('.pin-dots');
+      box.classList.remove('shake');
+      void box.offsetWidth;
+      box.classList.add('shake');
+    }
+    return wrap;
+  }
+
+  /** Opens a profile, asking for its PIN first when it's locked. */
+  function openProfile(p, before) {
+    const go = () => { if (before) before(); activateProfile(p); };
+    if (!isLocked(p)) { go(); return; }
+    pinPad({
+      title: `Enter ${p.name}’s PIN`,
+      subtitle: 'Forgot it? Remove the lock in the NucFlix iPhone app.',
+      onPin: async pin => {
+        if (!(await pinMatches(p, pin))) return false;
+        Modal.close();
+        go();
+        return true;
+      }
+    });
+  }
+
+  /** Settings → Profile Lock: choose a PIN (twice) to lock, or enter it to unlock. */
+  function toggleProfileLock() {
+    const p = S.cloud.profile;
+    if (!p || p.kids) return;
+    const save = hash => {
+      p.prefs = Object.assign({}, p.prefs, { pinHash: hash });
+      Cloud.savePrefs({ pinHash: hash });
+      Account.rerender();
+    };
+    if (isLocked(p)) {
+      pinPad({
+        title: 'Turn off Profile Lock',
+        subtitle: `Enter ${p.name}’s current PIN.`,
+        onPin: async pin => {
+          if (!(await pinMatches(p, pin))) return false;
+          save('');
+          toast('Profile Lock is off');
+          return true;
+        }
+      });
+      return;
+    }
+    let first = null;
+    pinPad({
+      title: 'Choose a 4-digit PIN',
+      subtitle: `${p.name} will need it to open this profile on every device.`,
+      onPin: async pin => {
+        if (!first) { first = pin; return 'Enter the same PIN again'; }
+        if (pin !== first) { first = null; return 'Those PINs didn’t match. Choose a PIN again.'; }
+        save(await pinHash(p.id, pin));
+        toast('Profile Lock is on');
+        return true;
+      }
+    });
+  }
+
+  /** Asks for text with the Fire TV keyboard (or the browser's prompt in the desktop preview). */
+  let textPrompt = null;
+  function askText(label, value, onDone) {
+    if (Native) { textPrompt = onDone; Native.promptInput(label, value, 'prompt'); return; }
+    const v = window.prompt(label, value);
+    if (v != null) onDone(v);
+  }
+
+  /** Name, then standard or kids; the new profile is shared with the iPhone and other TVs, and starts watching. */
+  function addProfile(unlocked) {
+    if (S.cloud.profiles.length >= MAX_PROFILES) { toast(`You can have up to ${MAX_PROFILES} profiles`); return; }
+    // With locked profiles in the house, adding one needs one of their PINs (else a kid could add a way around them).
+    const locked = S.cloud.profiles.filter(isLocked);
+    if (locked.length && !unlocked) {
+      pinPad({
+        title: 'Enter a profile PIN',
+        subtitle: `Adding a profile needs the PIN of ${locked.map(p => p.name).join(' or ')}.`,
+        onPin: async pin => {
+          for (const p of locked) if (await pinMatches(p, pin)) { Modal.close(); addProfile(true); return true; }
+          return false;
+        }
+      });
+      return;
+    }
+    askText('New profile name', '', raw => {
+      const name = String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+      if (!name) { toast('Enter a name for the profile'); return; }
+      if (S.cloud.profiles.some(p => p.name.toLowerCase() === name.toLowerCase())) { toast(`There’s already a profile called ${name}`); return; }
+      const create = async kids => {
+        Modal.closeAll();
+        const used = new Set(S.cloud.profiles.map(p => p.avatar));
+        const avatar = Object.keys(AVATAR_COLORS).find(c => !used.has(c)) || 'red';
+        const order = S.cloud.profiles.reduce((m, p) => Math.max(m, p.order || 0), -1) + 1;
+        try {
+          const profile = await Cloud.createProfile({ name, avatar, kids, order });
+          toast(`Added ${name}`);
+          activateProfile(profile);
+        } catch (e) {
+          toast('Couldn’t add the profile: ' + (e.code === 'permission-denied' ? 'not allowed for this TV' : e.message), 5000);
+        }
+      };
+      listModal({
+        title: `Who is ${name}?`,
+        rows: [
+          { label: 'Standard profile', value: 'Everything (adult content stays off until turned on)', onSelect: () => create(false) },
+          { label: 'Kids profile', value: 'Only titles suitable for children', onSelect: () => create(true) }
+        ]
+      });
+    });
+  }
+
   // ------------------------------------------------------------------ Cloud session glue
 
   let householdReady = Promise.resolve();
@@ -1534,7 +1754,13 @@
         S.cloud.profiles = list;
         const cur = S.cloud.profile && list.find(p => p.id === S.cloud.profile.id);
         if (S.cloud.profile && !cur && S.screen !== 'who') { toast('This profile was removed'); Who.show(); }
-        if (cur) S.cloud.profile = cur;
+        if (cur) {
+          // Settings changed on the iPhone (or a kids switch) apply here right away.
+          const kidsChanged = !!S.cloud.profile.kids !== !!cur.kids;
+          S.cloud.profile = cur;
+          if (kidsChanged && S.cloud.line) startKids(S.cloud.line).then(() => { if (S.raw) { applyCatalogFilter(); refreshVisible(); checkKidsTitles(S.cloud.line); } });
+          if ((applyProfilePrefs(cur) || kidsChanged) && S.raw) { applyCatalogFilter(); refreshVisible(); }
+        }
         gotProfiles = true;
         if (gotLines) ready();
         cloudChanged();
@@ -1577,14 +1803,25 @@
   async function activateProfile(profile) {
     if (!S.cloud.lines.length) { toast('Add an IPTV line in the NucFlix iPhone app first'); return; }
     const line = S.cloud.lines.find(l => l.id === Cloud.lastLineId) || S.cloud.lines[0];
+    const kidsChanged = isKids() !== !!profile.kids;
     S.cloud.profile = profile;
     S.taste = Store.get(tasteKey(), []);
-    S.prefs.autoplayNext = !(profile.prefs && profile.prefs.autoplayNext === false);
-    if (profile.kids && S.prefs.showAdult) {
-      S.prefs.showAdult = false;
-      if (S.raw) applyCatalogFilter();
-    }
+    if ((applyProfilePrefs(profile) || kidsChanged) && S.raw) applyCatalogFilter();
     await useLine(line);
+  }
+
+  /**
+   * The profile's synced settings (Autoplay Next Episode, Show Adult Content), shared with the iPhone app.
+   * Returns true when the adult filter changed.
+   */
+  function applyProfilePrefs(profile) {
+    const p = profile.prefs || {};
+    const showAdult = !profile.kids && p.showAdult === true;
+    const changed = showAdult !== S.prefs.showAdult;
+    S.prefs.autoplayNext = p.autoplayNext !== false;
+    S.prefs.showAdult = showAdult;
+    savePrefs();
+    return changed;
   }
 
   let syncToken = 0;
@@ -1629,6 +1866,7 @@
     // Offline or slow: give up waiting after a few seconds; the listeners still fill things in later.
     await Promise.race([Promise.all([synced, startTags(line)]), new Promise(r => setTimeout(r, 8000))]);
     if (token !== syncToken) return; // switched line/profile while waiting
+    if (isKids() && S.raw) applyCatalogFilter(); // with both the category tags and the title scores in
     S.syncing = false;
     markDirty();
     const tab = ['home', 'movies', 'series', 'mylist', 'live'].includes(S.screen) ? S.screen : null;
@@ -1639,6 +1877,10 @@
       if (parked) Focus.set(defaultFocusFor(tab) || Focus.cur);
     }
     prerenderTabs();
+    if (isKids() && S.cat.kidsPending.length) {
+      toast(`Checking ${S.cat.kidsPending.length} titles so ${S.cloud.profile.name} only sees kid-friendly ones…`, 5000);
+      checkKidsTitles(line);
+    }
   }
 
   /** AI category tags (kids-safe, adult, language, genre) for the line; re-filters the catalog as they arrive. */
@@ -1646,7 +1888,7 @@
   function startTags(line) {
     if (!S.raw) return Promise.resolve();
     let first = true;
-    return Smart.Tags.start(line.id, S.raw, () => {
+    const tags = Smart.Tags.start(line.id, S.raw, () => {
       // The saved tags filter the catalog before Home first shows; later changes are batched.
       if (first) {
         first = false;
@@ -1656,8 +1898,36 @@
       clearTimeout(tagsTimer);
       tagsTimer = setTimeout(() => {
         if (!S.raw || !S.cloud.line || S.cloud.line.id !== line.id) return;
-        if (isKids() || !S.prefs.showAdult) { applyCatalogFilter(); refreshVisible(); }
+        if (isKids() || !S.prefs.showAdult) { applyCatalogFilter(); refreshVisible(); checkKidsTitles(line); }
       }, 4000);
+    });
+    return Promise.all([tags, startKids(line)]);
+  }
+
+  /** Kids profiles: follow the line's AI title scores; new scores re-filter the catalog (batched). */
+  let kidsTimer = null;
+  function startKids(line) {
+    clearTimeout(kidsTimer);
+    if (!isKids() || !S.raw) { Smart.Kids.stop(); return Promise.resolve(); }
+    let first = true;
+    return Smart.Kids.start(line.id, () => {
+      if (first) { first = false; return; } // useLine filters once the first scores (and tags) are in
+      clearTimeout(kidsTimer);
+      kidsTimer = setTimeout(() => {
+        if (!isKids() || !S.raw || !S.cloud.line || S.cloud.line.id !== line.id) return;
+        applyCatalogFilter();
+        refreshVisible();
+      }, 4000);
+    });
+  }
+
+  /** Sends kids-profile titles that passed the rules but have no AI score yet to be checked (in the background). */
+  function checkKidsTitles(line) {
+    if (!isKids() || !line || !S.cat.kidsPending.length || Smart.Kids.running) return;
+    Smart.Kids.fill(line.id, () => S.cat.kidsPending).then(() => {
+      if (!isKids() || !S.raw || !S.cloud.line || S.cloud.line.id !== line.id) return;
+      applyCatalogFilter();
+      refreshVisible();
     });
   }
 
@@ -1769,6 +2039,43 @@
     refreshVisible();
   }
 
+  /** ☰ on a Continue Watching card: forget its progress on every device (for a show, all its episodes). */
+  function removeFromContinueWatching(key) {
+    const seriesId = /^(series|upnext)-/.test(key) ? key.replace(/^(series|upnext)-/, '') : null;
+    const hKey = seriesId ? `series-${seriesId}` : key;
+    const h = S.history.find(x => x.key === hKey);
+    if (!h || !S.cloud.line) return;
+    const card = Focus.cur;
+    const next = card && (card.nextElementSibling || card.previousElementSibling);
+    const nextFk = next && next.getAttribute('data-fk');
+    const title = XtreamTextFormatter.format(h.title).cleanTitle;
+    confirmModal({
+      title: `Remove ${title} from Continue Watching?`,
+      message: seriesId ? 'It goes from every device, and this show’s episode progress is cleared.' : 'It goes from every device.',
+      okLabel: 'Remove',
+      danger: true,
+      onOk: () => {
+        const docs = lastProgressDocs.filter(d => seriesId
+          ? d.kind === 'episode' && String(d.seriesId) === seriesId
+          : d.kind === 'movie' && String(d.streamId) === String(h.streamID));
+        const line = S.cloud.line.id;
+        // Plus the newest position, which may still be waiting to be written.
+        const latest = seriesId ? `${line}:episode:${h.episodeID}` : `${line}:movie:${h.streamID}`;
+        Cloud.deleteProgress([...new Set(docs.map(d => d.key).concat(latest))]);
+        S.history = S.history.filter(x => x.key !== hKey);
+        if (seriesId) docs.forEach(d => { delete S.episodeProgress[d.episodeId]; });
+        markDirty();
+        const root = $(`#${S.screen}-screen`);
+        if (root && Screens[S.screen]) {
+          refocusAfter(root, () => Screens[S.screen].render(S.screenArgs));
+          const el = nextFk && root.querySelector(`[data-fk="${CSS.escape(nextFk)}"]`);
+          if (el) Focus.set(el);
+        }
+        toast(`Removed ${title}`);
+      }
+    });
+  }
+
   function clearCloudHistory() {
     Cloud.deleteProgress(lastProgressDocs.map(d => d.key));
     S.history = [];
@@ -1852,7 +2159,9 @@
       if (myList.length) rows.push(posterRow('mylist', 'My List', myList.slice(0, 30)));
 
       mountRows(root, this.hero ? billboardHTML(this.hero.entry, { reason: this.hero.reason }) : '',
-        rows.length ? rows : [emptyState(ICON.tv, 'Nothing here yet', 'Your provider returned no Movies or Series. Try Live TV.')]);
+        rows.length ? rows : [isKids() && S.cat.kidsPending.length
+          ? emptyState(ICON.tv, 'Getting things ready', 'Checking titles so only kid-friendly ones show. The first time takes a few minutes.')
+          : emptyState(ICON.tv, 'Nothing here yet', 'Your provider returned no Movies or Series. Try Live TV.')]);
       if (this.hero) fillBillboardPlot(root, this.hero.entry);
     },
 
@@ -2743,12 +3052,13 @@
               <div class="settings-title">Playback</div>
               ${setting('set-format', 'Live Stream Format', fmtNames[S.prefs.liveFormat] || S.prefs.liveFormat, 'Switch if channels buffer or fail to start', () => this.cycle('liveFormat', ['m3u8', 'ts', 'm3u8_root']))}
               ${setting('set-autoplay', 'Autoplay Next Episode', S.prefs.autoplayNext ? 'On' : 'Off', 'Countdown to the next episode when one ends', () => this.toggle('autoplayNext'))}
+              ${isKids() ? '' : setting('set-lock', 'Profile Lock', isLocked(S.cloud.profile) ? 'On' : 'Off', 'Ask for a 4-digit PIN to open this profile', () => toggleProfileLock())}
               ${isKids() ? '' : setting('set-adult', 'Show Adult Content', S.prefs.showAdult ? 'On' : 'Off', 'Hides adult categories when off', () => { this.toggle('showAdult'); applyCatalogFilter(); })}
               <div class="settings-title">Library</div>
               ${setting('set-refresh', 'Refresh Catalog', '', 'Reload channels, movies & shows from your provider', () => this.refresh())}
               ${setting('set-history', 'Clear Watch History', `${S.history.length} items`, 'Clears this profile’s Continue Watching on every device', () => confirmModal({ title: 'Clear watch history?', okLabel: 'Clear', danger: true, onOk: () => { clearCloudHistory(); markDirty(); this.rerender(); toast('Watch history cleared'); } }))}
               <div class="settings-title">NucFlix Account</div>
-              ${setting('set-profile', 'Profile', S.cloud.profile ? S.cloud.profile.name : '—', 'Who’s watching? Profiles are managed in the NucFlix iPhone app', () => (Cloud.paired ? Who.show() : unpairTV()))}
+              ${setting('set-profile', 'Profile', S.cloud.profile ? S.cloud.profile.name : '—', 'Switch or add profiles (rename and delete them in the NucFlix iPhone app)', () => (Cloud.paired ? Who.show() : unpairTV()))}
               ${setting('set-line', 'IPTV Line', S.cloud.line ? S.cloud.line.name : '—', `${S.cloud.lines.length} line${S.cloud.lines.length === 1 ? '' : 's'} in your account`, () => chooseLine())}
               ${Cloud.paired ? setting('set-unpair', 'Unpair This TV', Cloud.ownerName || '', 'Disconnect from your NucFlix account', () => confirmModal({ title: 'Unpair this TV?', message: 'It will need a new code from your iPhone to watch again.', okLabel: 'Unpair', danger: true, onOk: () => unpairTV() })) : setting('set-pair', 'Pair This TV', '', 'Connect to your NucFlix account', () => unpairTV())}
               ${setting('set-exit', 'Exit NucFlix', '', 'Close the app', () => Native ? Native.exitApp() : toast('Exit'))}
@@ -2765,7 +3075,7 @@
     toggle(key) {
       S.prefs[key] = !S.prefs[key];
       savePrefs();
-      if (key === 'autoplayNext') Cloud.savePrefs({ autoplayNext: S.prefs.autoplayNext });
+      if (key === 'autoplayNext' || key === 'showAdult') Cloud.savePrefs({ [key]: S.prefs[key] });
       this.rerender();
     },
     async refresh() {
@@ -3681,6 +3991,8 @@
           return;
         }
         case 'MENU': {
+          const fk = Focus.cur && Focus.cur.isConnected ? Focus.cur.getAttribute('data-fk') || '' : '';
+          if (fk.startsWith('cw-')) { removeFromContinueWatching(fk.slice(3)); return; }
           const scr = Screens[S.screen];
           if (scr && scr.onMenu && scr.onMenu()) return;
           return;
@@ -3709,6 +4021,10 @@
     onNativeFieldInput(fieldKey, val) {
       if (fieldKey === 'search') {
         Search.setQuery(val);
+      } else if (fieldKey === 'prompt' && textPrompt) {
+        const done = textPrompt;
+        textPrompt = null;
+        done(val);
       }
     },
 

@@ -247,6 +247,17 @@ const Cloud = (() => {
     batch.commit().catch(() => { });
   }
 
+  /** Adds a person profile (same shape as the iPhone app's). Paired TVs may add, not rename or delete. */
+  async function createProfile({ name, avatar, kids, order }) {
+    const ref = db.collection(`users/${owner}/profiles`).doc();
+    const data = {
+      name, avatar, kids, order, prefs: { autoplayNext: true },
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+    };
+    await ref.set(data);
+    return Object.assign({ id: ref.id }, data);
+  }
+
   /** Paired TVs may only change a profile's prefs (see firestore.rules). */
   function savePrefs(prefs) {
     if (!session) return;
@@ -298,6 +309,23 @@ const Cloud = (() => {
     });
   }
 
+  /**
+   * Live kids-suitability scores for a line's titles: cb({ 'movie:12': 0.95, ... }) (see the kidsTitles function).
+   * Resolves after the first answer has been handed to cb (or the read failed).
+   */
+  let kidsUnsub = null;
+  function watchKidsTitles(lineId, cb) {
+    if (kidsUnsub) kidsUnsub();
+    kidsUnsub = null;
+    if (!cb || !db || !owner || !lineId) return Promise.resolve();
+    return new Promise(resolve => {
+      kidsUnsub = db.doc(`users/${owner}/kidsTitles/${lineId}`).onSnapshot(d => {
+        cb((d.exists && d.get('titles')) || {});
+        resolve();
+      }, () => resolve());
+    });
+  }
+
   // ---------------------------------------------------------------- now playing
   // users/{owner}/devices/{tvUid}: while this TV streams from the line, phones pause their downloads (lines
   // often allow one connection). lastSeen is refreshed every minute, so a TV that dies stops counting.
@@ -340,7 +368,7 @@ const Cloud = (() => {
 
   return {
     start, beginPairing, unpair, watchHousehold, stopHousehold, startSession, stopSession,
-    setFavorite, saveProgress, flush, deleteProgress, savePrefs, ai, getMarker, saveMarker, watchLineTags, setNowPlaying,
+    setFavorite, saveProgress, flush, deleteProgress, savePrefs, createProfile, ai, getMarker, saveMarker, watchLineTags, watchKidsTitles, setNowPlaying,
     get paired() { return !!owner; },
     get ownerName() { return ls.get(K.ownerName) || ''; },
     get lastProfileId() { return ls.get(K.profile); },
