@@ -253,6 +253,12 @@
         return false;
       }
       const vertical = dir === 'UP' || dir === 'DOWN';
+      // The banner's buttons sit left of the centred tabs, and scroll off the top once you are in the rows,
+      // so neither geometric search reaches them: Down from the tabs and Up from the first row go there.
+      if (dir === 'DOWN' && navEl.contains(cur)) {
+        const bb = this.bannerEntry();
+        if (bb) { this.set(bb); return true; }
+      }
       // Fast paths (no layout reads): rows move by index, grids by index and column count.
       const row = cur.parentElement && cur.parentElement.classList.contains('row-track') ? cur.closest('[data-row]') : null;
       if (row) {
@@ -264,6 +270,8 @@
         const rows = this.roots().flatMap(r => Array.from(r.querySelectorAll('[data-row]')));
         const target = rows[rows.indexOf(row) + (dir === 'DOWN' ? 1 : -1)];
         if (target) { this.set(this.rowEntry(target)); return true; }
+        const bb = dir === 'UP' && rows.indexOf(row) === 0 && this.bannerEntry();
+        if (bb) { this.set(bb); return true; }
       } else if (cur.parentElement && cur.parentElement.hasAttribute('data-grid')) {
         const moved = this.gridMove(cur, dir);
         if (moved !== null) return moved;
@@ -289,6 +297,15 @@
       }
       this.set(best);
       return true;
+    },
+
+    /** The current screen's billboard button to land on (the one last focused there, else Play). */
+    bannerEntry() {
+      const scr = S.screen && document.getElementById(S.screen + '-screen');
+      const bb = scr && scr.querySelector('[data-billboard]');
+      if (!bb) return null;
+      const last = this.memory.billboard;
+      return last && last.isConnected && bb.contains(last) ? last : bb.querySelector('.bb-buttons .focusable');
     },
 
     rowEntry(row) {
@@ -390,7 +407,7 @@
       mount(wrap, html);
       modalLayer.appendChild(wrap);
       modalLayer.hidden = false;
-      this.stack.push({ wrap, prevFocus, onClose: opts.onClose || null });
+      this.stack.push({ wrap, prevFocus, onClose: opts.onClose || null, onKey: opts.onKey || null });
       const f = opts.focus ? wrap.querySelector(opts.focus) : null;
       Focus.set(f || Focus.first(wrap));
       return wrap;
@@ -1074,6 +1091,12 @@
       row.classList.add('active');
       const items = Array.from(row.querySelectorAll('.row-track > .ri'));
       const idx = Number(el.getAttribute('data-idx'));
+      if (row.classList.contains('chips')) {
+        const track = row.querySelector('.row-track');
+        track.style.transform = `translateX(${-Math.max(0, el.offsetLeft - items[0].offsetLeft - 280)}px)`;
+        if (content) content.style.transform = `translateY(${-Math.max(0, row.offsetTop - ROW_TOP)}px)`;
+        return;
+      }
       let x = 0;
       items.forEach((it, i) => {
         it.classList.toggle('past', i < idx);
@@ -1290,7 +1313,7 @@
     const btn = (fk, icon, label, fn) =>
       `<div class="tv-btn focusable" data-fk="${fk}" ${act(fn)} ${onF(el => Rows.top(el))}>${icon}<span>${esc(label)}</span></div>`;
     return `
-      <section class="billboard" data-billboard>
+      <section class="billboard" data-billboard data-group="billboard">
         <div class="bb-art">${imgTag(entryArt(entry), '', 1280)}</div>
         <div class="bb-fade"></div>
         ${extra}
@@ -1876,6 +1899,7 @@
           if (b && b.length < 20) b.push(d);
         }
         catRows.forEach(c => rows.push(posterRow(`${screenId}-c${c.categoryId}`, c.cleanName, buckets.get(c.categoryId).map(d => this.wrap(d)))));
+        rows.unshift(this.chipRow());
         const genres = `
           <div class="bb-genres">
             <span class="bb-section">${this.noun()}</span>
@@ -1886,6 +1910,19 @@
         if (hero) fillBillboardPlot(root, hero.entry);
       },
 
+      /** "Categories" row: the full browser, then the categories used last, then the biggest. */
+      chipRow() {
+        const cats = this.cats();
+        const byId = new Map(cats.map(c => [String(c.categoryId), c]));
+        const recent = RecentCats.get(kind).map(id => byId.get(id)).filter(Boolean);
+        const seen = new Set(recent.map(c => c.categoryId));
+        const big = cats.filter(c => !seen.has(c.categoryId)).sort((a, b) => b.count - a.count).slice(0, Math.max(0, 16 - recent.length));
+        const open = id => { RecentCats.add(kind, id); Router.go(screenId, { catId: id }); };
+        const items = [{ fk: `${screenId}-cats-all`, cls: 'chip icon', html: `${ICON.format}<span>All ${cats.length} categories</span>`, act: () => this.openCategories() }]
+          .concat([...recent, ...big].map(c => ({ fk: `${screenId}-cat-${c.categoryId}`, cls: 'chip', html: `<span>${esc(catLabel(c))}</span>`, act: () => open(c.categoryId) })));
+        return Rows.html({ id: `${screenId}-cats`, title: 'Categories', style: 'chips', items });
+      },
+
       renderGrid() {
         const root = this.root();
         const isMine = this.catId === '__mylist';
@@ -1893,8 +1930,9 @@
           : this.catId === '__new' ? this.newest().map(d => this.wrap(d))
           : this.allData().filter(d => d.categoryId === this.catId).map(d => this.wrap(d));
         this.shown = 0;
+        const cat = this.cats().find(c => String(c.categoryId) === String(this.catId));
         const title = isMine ? 'My List' : this.catId === '__new' ? `New ${this.noun()}`
-          : ((kind === 'movie' ? S.cat.catName.vod : S.cat.catName.series)[this.catId] || 'Category');
+          : cat ? catLabel(cat) : ((kind === 'movie' ? S.cat.catName.vod : S.cat.catName.series)[this.catId] || 'Category');
         mount(root, `
           <div class="grid-page">
             <div class="grid-head">
@@ -1902,7 +1940,9 @@
                 <div class="grid-kicker">${this.noun()}</div>
                 <h2>${esc(title)}</h2>
               </div>
-              <div class="tv-btn small focusable" data-fk="genres" ${act(() => this.openCategories())}>Categories ${ICON.down}</div>
+            </div>
+            <div class="grid-tools">
+              <div class="tv-btn small focusable" data-fk="genres" ${act(() => this.openCategories())}>${ICON.format}<span>All categories</span></div>
             </div>
             <div class="grid-focus" id="${screenId}-focus">${this.items.length} titles</div>
             <div class="grid-scroll" data-scroll="y" data-margin="40" data-group="${screenId}-grid">
@@ -1939,6 +1979,7 @@
 
       openCategories() {
         categoryExplorer({
+          kind,
           title: `${this.noun()} Categories`,
           cats: this.cats(),
           selectedId: this.catId,
@@ -1991,44 +2032,175 @@
 
   // ------------------------------------------------------------------ Category explorer (region groups + category list)
 
-  const REGION_GROUPS = [
-    { id: 'all', label: 'All', re: null },
-    { id: 'sports', label: 'Cricket & Sports', re: /cricket|sport|football|ipl|fifa|ufc|wwe|willow|espn|bein|dazn/i },
-    { id: 'asia', label: 'India & Asia', re: /asia|\bin\b|in\||hindi|punjabi|gujarati|tamil|telugu|malayalam|marathi|yupp|pak|bangla/i },
-    { id: 'uk', label: 'UK', re: /\buk\b|sky|tnt|bbc/i },
-    { id: 'usa', label: 'USA', re: /\bus\b|usa|nfl|nba|hbo/i },
-    { id: '4k', label: '4K & UHD', re: /4k|uhd|hevc|dolby|raw/i }
-  ];
+  // ------------------------------------------------------------------ Category browser
+  // Providers ship hundreds of categories (here: 267 live, 106 movie, 78 series), in their own order. The
+  // browser groups them twice over: by country / language (the "UK |" style prefix) and by type (AI tag or
+  // name), with the categories you used last on top. Groups on the left, categories A–Z on the right.
 
-  function categoryExplorer({ title, cats, selectedId, specials = [], onSelect }) {
-    let group = 'all';
+  const COUNTRY_NAMES = {
+    UK: 'United Kingdom', GB: 'United Kingdom', US: 'USA', USA: 'USA', CA: 'Canada', AU: 'Australia', IE: 'Ireland',
+    IN: 'India', PK: 'Pakistan', BD: 'Bangladesh', AF: 'Afghanistan', LK: 'Sri Lanka', NP: 'Nepal',
+    AR: 'Arabic', TR: 'Turkey', IR: 'Iran', FR: 'France', DE: 'Germany', ES: 'Spain', IT: 'Italy', PT: 'Portugal',
+    BR: 'Brazil', NL: 'Netherlands', BE: 'Belgium', PL: 'Poland', RO: 'Romania', GR: 'Greece', SE: 'Sweden',
+    NO: 'Norway', DK: 'Denmark', FI: 'Finland', RU: 'Russia', UA: 'Ukraine', AL: 'Albania', EX: 'Ex-Yugoslavia',
+    LATAM: 'Latin America', LAT: 'Latin America', MX: 'Mexico', AFR: 'Africa', NG: 'Nigeria', ZA: 'South Africa',
+    PH: 'Philippines', CN: 'China', JP: 'Japan', KR: 'Korea', TH: 'Thailand', VN: 'Vietnam', MY: 'Malaysia',
+    EN: 'English', HI: 'Hindi', TA: 'Tamil', TE: 'Telugu', ML: 'Malayalam', KN: 'Kannada', MR: 'Marathi',
+    PB: 'Punjabi', PA: 'Punjabi', GU: 'Gujarati', BN: 'Bangla', UR: 'Urdu', '4K': '4K & UHD', VIP: 'VIP', MULTI: 'Multi-language'
+  };
+  // Type groups: the AI tag's genre when the category has one, else the name.
+  const CATEGORY_TYPES = [
+    { id: 'sports', label: 'Sports', re: /sport|cricket|football|soccer|nfl|nba|nhl|mlb|ufc|wwe|boxing|f1|formula|tennis|golf|racing|bein|dazn|espn|willow|ppv|league|olymp/i },
+    { id: 'news', label: 'News', re: /news|cnn|bbc news|sky news|al jazeera/i },
+    { id: 'kids', label: 'Kids & Family', re: /kid|cartoon|junior|disney|nick|anim|anime|family|pixar|children/i },
+    { id: 'movies', label: 'Movies & Cinema', re: /movie|cinema|film|hbo|showtime|starz|cinemax|box office|blockbuster/i },
+    { id: 'action', label: 'Action', re: /action|adventure|marvel|\bdc\b|superhero/i },
+    { id: 'comedy', label: 'Comedy', re: /comed|funny|sitcom|stand.?up/i },
+    { id: 'drama', label: 'Drama', re: /drama|soap|telenovela/i },
+    { id: 'thriller', label: 'Thriller & Crime', re: /thrill|crime|mystery|suspense|detective/i },
+    { id: 'horror', label: 'Horror', re: /horror|scary|zombie/i },
+    { id: 'romance', label: 'Romance', re: /romanc|love/i },
+    { id: 'scifi', label: 'Sci-Fi & Fantasy', re: /sci.?fi|science fiction|fantasy|space/i },
+    { id: 'documentary', label: 'Documentary', re: /docu|discovery|nat ?geo|history|science|nature|animal/i },
+    { id: 'music', label: 'Music', re: /music|mtv|songs|concert|radio/i },
+    { id: 'religious', label: 'Religious', re: /relig|islam|quran|church|christian|gospel|bhakti|devot|gurbani|spiritual/i },
+    { id: 'entertainment', label: 'Entertainment', re: /entertain|general|variety|reality|lifestyle|series|tv shows/i },
+    { id: 'uhd', label: '4K & UHD', re: /4k|uhd|hevc|dolby/i }
+  ];
+  const TAG_TYPE = { sports: 'sports', news: 'news', kids: 'kids', family: 'kids', action: 'action', comedy: 'comedy', drama: 'drama',
+    thriller: 'thriller', crime: 'thriller', horror: 'horror', romance: 'romance', scifi: 'scifi', documentary: 'documentary',
+    music: 'music', religious: 'religious', reality: 'entertainment' };
+
+  /** Categories used last per section (newest first), for the "Recent" group and the front of the chip rows. */
+  const RecentCats = {
+    get(kind) { return Store.get('recentCats.' + kind, []); },
+    add(kind, id) {
+      if (!id || String(id).startsWith('__')) return;
+      Store.set('recentCats.' + kind, [String(id), ...this.get(kind).filter(x => x !== String(id))].slice(0, 12));
+    }
+  };
+
+  const catLabel = c => c.prefixBadge ? `${c.prefixBadge} · ${c.cleanName}` : c.cleanName;
+  const byName = (a, b) => a.cleanName.localeCompare(b.cleanName) || String(a.prefixBadge || '').localeCompare(String(b.prefixBadge || ''));
+
+  /** [{ id, label, cats, section? }]: Recent, All, then countries / languages, then types. */
+  function categoryGroups(kind, cats) {
+    const byId = new Map(cats.map(c => [String(c.categoryId), c]));
+    const groups = [];
+    const recent = RecentCats.get(kind).map(id => byId.get(id)).filter(Boolean);
+    if (recent.length) groups.push({ id: 'recent', label: 'Recent', cats: recent });
+    groups.push({ id: 'all', label: 'All categories', cats: cats.slice().sort(byName) });
+
+    const regions = new Map();
+    for (const c of cats) {
+      const p = String(c.prefixBadge || '').toUpperCase().trim();
+      if (!p || p.length > 6) continue;
+      if (!regions.has(p)) regions.set(p, []);
+      regions.get(p).push(c);
+    }
+    const regionGroups = [...regions.entries()].filter(([, list]) => list.length >= 2)
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([p, list], i) => ({ id: 'r-' + p, label: COUNTRY_NAMES[p] || p, cats: list.sort(byName), section: i === 0 ? 'Country & language' : null }));
+    groups.push(...regionGroups);
+
+    const tagKind = kind === 'live' ? 'live' : kind;
+    const typeGroups = CATEGORY_TYPES.filter(t => kind === 'live' || t.id !== 'movies').map(t => ({
+      id: 't-' + t.id, label: t.label,
+      cats: cats.filter(c => {
+        const tag = Smart.Tags.get(tagKind, c.categoryId);
+        return (tag && TAG_TYPE[tag.genre] === t.id) || t.re.test(c.categoryName);
+      }).sort(byName)
+    })).filter(g => g.cats.length);
+    if (typeGroups.length) typeGroups[0].section = 'Type';
+    groups.push(...typeGroups);
+    return groups;
+  }
+
+  /**
+   * Two-pane category picker: groups left, that group's categories right. Moving through the groups updates
+   * the list at once; ◀ ▶ switch panes; ⏪ ⏩ (or CH −/+) jump ten rows.
+   */
+  function categoryExplorer({ kind, title, cats, selectedId, specials = [], onSelect }) {
+    const groups = categoryGroups(kind, cats);
+    const pick = id => { Modal.close(); RecentCats.add(kind, id); onSelect(id); };
+    let groupId = groups.find(g => g.id === 'recent' && g.cats.some(c => String(c.categoryId) === String(selectedId))) ? 'recent'
+      : (groups.find(g => g.id === 'recent') ? 'recent' : 'all');
     let wrap = null;
-    const row = (id, name, count, prefix) => `
-      <div class="cat-item focusable ${id === selectedId ? 'on' : ''}" data-fk="ci-${esc(id)}" ${act(() => { Modal.close(); onSelect(id); })}>
-        ${prefix ? `<span class="prefix-tag">${esc(prefix)}</span>` : ''}
-        <span class="cat-item-name">${esc(name)}</span>
-        ${count != null ? `<span class="cat-item-count">${count}</span>` : ''}
+
+    const groupItem = g => `
+      ${g.section ? `<div class="cb-section">${esc(g.section)}</div>` : ''}
+      <div class="cb-group focusable ${g.id === groupId ? 'on' : ''}" data-fk="cg-${esc(g.id)}" data-gid="${esc(g.id)}"
+        ${act(() => focusList())} ${onF(() => showGroup(g.id))}>
+        <span class="cb-group-name">${esc(g.label)}</span><span class="cat-item-count">${g.cats.length}</span>
       </div>`;
-    const build = () => {
-      const g = REGION_GROUPS.find(x => x.id === group);
-      const list = g.re ? cats.filter(c => g.re.test(c.categoryName)) : cats;
-      return `
-        <div class="modal-sheet explorer">
-          <h2 class="modal-title">${esc(title)}</h2>
-          <div class="chip-row" data-scroll="x" data-margin="20">
-            ${REGION_GROUPS.map(x => `<div class="chip focusable ${x.id === group ? 'on' : ''}" data-fk="eg-${x.id}" ${act(() => { group = x.id; redraw(); })}>${esc(x.label)}</div>`).join('')}
-          </div>
-          <div class="modal-list" data-scroll="y" data-margin="30" data-trap="1">
-            ${specials.map(([id, name, count]) => row(id, name, count, '')).join('')}
-            ${list.map(c => row(c.categoryId, c.cleanName, c.count, c.prefixBadge)).join('') || '<div class="empty-note small">No categories in this group.</div>'}
-          </div>
-        </div>`;
+    const specialItem = ([id, name, count]) => `
+      <div class="cb-group special focusable" data-fk="cs-${esc(id)}" ${act(() => pick(id))}>
+        <span class="cb-group-name">${esc(name)}</span>${count != null ? `<span class="cat-item-count">${count}</span>` : ''}
+      </div>`;
+    const listHTML = g => g.cats.map(c => `
+      <div class="cat-item focusable ${String(c.categoryId) === String(selectedId) ? 'on' : ''}" data-fk="ci-${esc(c.categoryId)}"
+        ${act(() => pick(c.categoryId))}>
+        ${c.prefixBadge ? `<span class="prefix-tag">${esc(c.prefixBadge)}</span>` : ''}
+        <span class="cat-item-name">${esc(c.cleanName)}</span>
+        <span class="cat-item-count">${c.count}</span>
+      </div>`).join('') || '<div class="empty-note small">No categories here.</div>';
+
+    const showGroup = id => {
+      if (id === groupId && wrap && wrap.querySelector('.cb-list').childElementCount) return;
+      groupId = id;
+      const g = groups.find(x => x.id === id);
+      wrap.querySelectorAll('.cb-group.on').forEach(el => el.classList.remove('on'));
+      const item = wrap.querySelector(`.cb-group[data-gid="${CSS.escape(id)}"]`);
+      if (item) item.classList.add('on');
+      wrap.querySelector('.cb-list-title').textContent = g.label;
+      const list = wrap.querySelector('.cb-list');
+      mount(list, listHTML(g));
+      list.scrollTop = 0;
+      list.style.transform = '';
     };
-    const redraw = () => {
-      mount(wrap, build());
-      Focus.set(wrap.querySelector(`[data-fk="eg-${group}"]`));
+    const focusList = () => {
+      const list = wrap.querySelector('.cb-list');
+      Focus.set(list.querySelector('.cat-item.on') || list.querySelector('.cat-item'));
     };
-    wrap = Modal.open(build(), { focus: selectedId ? `[data-fk="ci-${CSS.escape(selectedId)}"]` : null });
+    const focusGroup = () => Focus.set(wrap.querySelector(`.cb-group[data-gid="${CSS.escape(groupId)}"]`));
+
+    wrap = Modal.open(`
+      <div class="modal-sheet cat-browser">
+        <h2 class="modal-title">${esc(title)}</h2>
+        <div class="cb-panes">
+          <div class="cb-groups" data-scroll="y" data-margin="30" data-trap="1">
+            ${specials.map(specialItem).join('')}
+            ${groups.map(groupItem).join('')}
+          </div>
+          <div class="cb-right">
+            <div class="cb-list-title"></div>
+            <div class="cb-list" data-scroll="y" data-margin="30" data-trap="1"></div>
+            <div class="cb-hint">◀ ▶ switch between groups and categories · Rewind / Fast-forward jump 10 rows</div>
+          </div>
+        </div>
+      </div>`, {
+      onKey(key) {
+        const cur = Focus.cur;
+        const inList = cur && cur.classList.contains('cat-item');
+        const inGroups = cur && cur.classList.contains('cb-group');
+        if (key === 'RIGHT' && inGroups) {
+          if (!cur.hasAttribute('data-gid')) return true; // specials select with OK
+          showGroup(cur.getAttribute('data-gid')); focusList(); return true;
+        }
+        if (key === 'LEFT' && inList) { focusGroup(); return true; }
+        const jump = { FF: 10, CH_DOWN: 10, REW: -10, CH_UP: -10 }[key];
+        if (jump && (inList || inGroups)) {
+          const items = Array.from(cur.parentElement.querySelectorAll(inList ? '.cat-item' : '.cb-group'));
+          const i = Math.max(0, Math.min(items.length - 1, items.indexOf(cur) + jump));
+          Focus.set(items[i]);
+          return true;
+        }
+        return false;
+      }
+    });
+    showGroup(groupId);
+    const sel = selectedId != null && wrap.querySelector(`.cb-list [data-fk="ci-${CSS.escape(String(selectedId))}"]`);
+    if (sel) Focus.set(sel); else focusGroup();
   }
 
   // ------------------------------------------------------------------ Live TV (category chips + channel grid)
@@ -2052,7 +2224,9 @@
     },
 
     title() {
-      return this.catId === '__fav' ? 'Favorite Channels' : (S.cat.catName.live[this.catId] || 'Live TV');
+      if (this.catId === '__fav') return 'Favorite Channels';
+      const cat = S.cat.liveCats.find(c => String(c.categoryId) === String(this.catId));
+      return cat ? catLabel(cat) : (S.cat.catName.live[this.catId] || 'Live TV');
     },
 
     render(args = {}) {
@@ -2064,9 +2238,14 @@
         this.catId = cats.length ? cats[0].categoryId : '__fav';
       }
       const chip = (id, label) => `<div class="chip focusable ${id === this.catId ? 'on' : ''}" data-fk="lc-${esc(id)}" data-cat="${esc(id)}" ${act(() => this.selectCat(id))}>${esc(label)}</div>`;
-      const chips = `<div class="chip icon focusable" data-fk="lc-all" ${act(() => this.openExplorer())}>${ICON.format}<span>All ${cats.length}</span></div>`
+      // Categories used last come first; the browser behind "All" has the rest, grouped.
+      const byId = new Map(cats.map(c => [String(c.categoryId), c]));
+      const recent = RecentCats.get('live').map(id => byId.get(id)).filter(Boolean);
+      const seen = new Set(recent.map(c => c.categoryId));
+      const rest = cats.filter(c => !seen.has(c.categoryId)).slice(0, Math.max(0, 30 - recent.length));
+      const chips = `<div class="chip icon focusable" data-fk="lc-all" ${act(() => this.openExplorer())}>${ICON.format}<span>All ${cats.length} categories</span></div>`
         + chip('__fav', '★ Favorites')
-        + cats.slice(0, 40).map(c => chip(c.categoryId, c.cleanName)).join('');
+        + [...recent, ...rest].map(c => chip(c.categoryId, catLabel(c))).join('');
       mount(root, `
         <div class="live-page">
           <div class="live-head">
@@ -2123,17 +2302,18 @@
       this.shown = end;
     },
 
-    selectCat(id) { this.catId = id; this.renderChannels(); },
+    selectCat(id) { this.catId = id; RecentCats.add('live', id); this.renderChannels(); },
 
     openExplorer() {
       categoryExplorer({
+        kind: 'live',
         title: 'Live TV Categories',
         cats: this.cats(),
         selectedId: this.catId,
         specials: [['__fav', '★ Favorite Channels', favoriteEntries(['live']).length]],
         onSelect: id => {
-          this.selectCat(id);
-          Focus.set($(`#live-screen .chip[data-cat="${CSS.escape(id)}"]`) || $('#live-screen [data-fk="lc-all"]'));
+          this.render({ catId: id }); // redraws the chips with this category up front
+          Focus.set($('#live-screen .ch-tile') || $(`#live-screen .chip[data-cat="${CSS.escape(id)}"]`));
         }
       });
     },
@@ -3440,6 +3620,8 @@
     onRemoteKey(key) {
       if (S.splashActive) return;
       if (S.screen === 'player' && Player.onKey(key)) return;
+      const modal = Modal.stack[Modal.stack.length - 1];
+      if (modal && modal.onKey && modal.onKey(key)) return;
       switch (key) {
         case 'BACK': handleBack(); return;
         case 'UP': case 'DOWN': case 'LEFT': case 'RIGHT':
@@ -3511,7 +3693,7 @@
     const map = {
       ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
       Enter: 'SELECT', Escape: 'BACK', Backspace: 'BACK', ' ': 'PLAY_PAUSE', m: 'MENU', ContextMenu: 'MENU',
-      PageUp: 'CH_UP', PageDown: 'CH_DOWN', MediaPlayPause: 'PLAY_PAUSE'
+      PageUp: 'CH_UP', PageDown: 'CH_DOWN', MediaPlayPause: 'PLAY_PAUSE', '[': 'REW', ']': 'FF'
     };
     const k = map[e.key];
     if (k) { e.preventDefault(); App.onRemoteKey(k); }
