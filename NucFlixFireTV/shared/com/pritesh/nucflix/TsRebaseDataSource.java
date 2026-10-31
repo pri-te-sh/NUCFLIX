@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Live MPEG-TS source that runs the feed through {@link TsTimestampRebaser} (fresh state per connection). */
-final class TsRebaseDataSource implements DataSource {
+public final class TsRebaseDataSource implements DataSource {
     private final DataSource upstream;
     private final byte[] chunk = new byte[64 * 1024];
     private TsTimestampRebaser rebaser;
@@ -21,7 +21,7 @@ final class TsRebaseDataSource implements DataSource {
     private int outPos;
     private boolean ended;
 
-    TsRebaseDataSource(DataSource upstream) {
+    public TsRebaseDataSource(DataSource upstream) {
         this.upstream = upstream;
     }
 

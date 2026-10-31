@@ -17,7 +17,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         handle(intent)
-        setContent { NucFlixTheme { Root(cloud) } }
+        setContent { NucFlixTheme { Root(cloud, (application as NucFlixApp).library) } }
     }
 
     override fun onNewIntent(intent: Intent) {

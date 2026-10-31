@@ -7,11 +7,18 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.MemoryCacheSettings
+import com.google.firebase.functions.FirebaseFunctions
 import com.pritesh.nucflix.phone.data.CloudAccount
+import com.pritesh.nucflix.phone.data.Library
+import com.pritesh.nucflix.phone.player.PlayRequest
 
 class NucFlixApp : Application() {
     lateinit var cloud: CloudAccount
         private set
+    lateinit var library: Library
+        private set
+    /** What the player screen should play next (handed over by the screen that started it). */
+    var playRequest: PlayRequest? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -32,7 +39,9 @@ class NucFlixApp : Application() {
             // The host Mac, seen from the Android emulator.
             db.useEmulator("10.0.2.2", 8181)
             FirebaseAuth.getInstance().useEmulator("10.0.2.2", 9099)
+            FirebaseFunctions.getInstance("us-central1").useEmulator("10.0.2.2", 5001)
         }
         cloud = CloudAccount(this)
+        library = Library(this)
     }
 }

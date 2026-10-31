@@ -30,16 +30,18 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         firebase.forEach { (key, value) -> buildConfigField("String", "FIREBASE_$key", "\"$value\"") }
-        buildConfigField("boolean", "FIREBASE_EMULATOR", "false")
+        // -Pnucflix.emulator=true points a build at the local Firebase emulators (testing only).
+        buildConfigField("boolean", "FIREBASE_EMULATOR", (project.findProperty("nucflix.emulator") as String?).toBoolean().toString())
     }
 
     buildTypes {
-        debug {
-            val emulator = (project.findProperty("nucflix.emulator") as String?).toBoolean()
-            buildConfigField("boolean", "FIREBASE_EMULATOR", emulator.toString())
-        }
         release {
-            isMinifyEnabled = false
+            // Shrunk and optimised: Compose in a debug build is interpreted and far slower than what users get.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Signed with the debug key until a release key is set up (sideloading and testing).
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -52,6 +54,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // The player pieces shared with the Fire TV app, compiled from its folder so fixes reach both apps: FFmpeg
+    // audio decoders (DTS, TrueHD...), the MKV repair extractor and the live-TS timestamp re-baser.
+    sourceSets["main"].java.srcDir("../../NucFlixFireTV/shared")
+    sourceSets["main"].jniLibs.srcDir("../../NucFlixFireTV/jniLibs")
 }
 
 dependencies {
@@ -72,6 +79,14 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-functions")
+
+    // 1.10.1: the version the shared FFmpeg library and MKV extractor were built against.
+    implementation("androidx.media3:media3-exoplayer:1.10.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.10.1")
+    implementation("androidx.media3:media3-ui:1.10.1")
+    implementation("io.coil-kt.coil3:coil-compose:3.6.3")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
 
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")

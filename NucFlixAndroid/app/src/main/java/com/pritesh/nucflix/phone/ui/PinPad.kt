@@ -175,7 +175,12 @@ fun PinChooserDialog(onDismiss: () -> Unit, onChosen: (String) -> Unit) {
  * "Forgot PIN?": the phone's fingerprint, face or screen lock stands in for the PIN on the owner's phone.
  * A phone with no screen lock at all just opens (it isn't protected anyway), as on the iPhone.
  */
-fun unlockWithDeviceOwner(activity: FragmentActivity, then: () -> Unit) {
+fun unlockWithDeviceOwner(
+    activity: FragmentActivity,
+    title: String = "Open a locked profile",
+    subtitle: String = "Use your phone's screen lock instead of the PIN",
+    then: () -> Unit
+) {
     val allowed = BIOMETRIC_WEAK or DEVICE_CREDENTIAL // the combination every Android version from 9 accepts
     if (BiometricManager.from(activity).canAuthenticate(allowed) != BiometricManager.BIOMETRIC_SUCCESS) {
         then()
@@ -186,8 +191,8 @@ fun unlockWithDeviceOwner(activity: FragmentActivity, then: () -> Unit) {
     })
     prompt.authenticate(
         BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Open a locked profile")
-            .setSubtitle("Use your phone's screen lock instead of the PIN")
+            .setTitle(title)
+            .setSubtitle(subtitle)
             .setAllowedAuthenticators(allowed)
             .build()
     )

@@ -41,11 +41,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pritesh.nucflix.phone.data.CloudAccount
+import com.pritesh.nucflix.phone.data.Library
+import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.launch
 
 /** Which screen the account state calls for (the same steps as the iPhone app). */
 @Composable
-fun Root(cloud: CloudAccount) {
+fun Root(cloud: CloudAccount, library: Library) {
     Box(Modifier.fillMaxSize().background(NucColors.Background)) {
         when {
             cloud.phase == CloudAccount.Phase.STARTING -> Loading()
@@ -53,7 +55,14 @@ fun Root(cloud: CloudAccount) {
             !cloud.profilesLoaded || !cloud.linesLoaded -> Loading()
             cloud.selectedProfile == null -> ProfilePickerScreen(cloud)
             cloud.activeLine == null -> LineFormScreen(cloud, null, firstLine = true) {}
-            else -> HomeScreen(cloud)
+            else -> {
+                val uid = cloud.uid
+                val profile = cloud.selectedProfile
+                val line = cloud.activeLine
+                // Starts (or keeps) the catalog and sync for this profile + line; profile prefs changes refilter.
+                LaunchedEffect(uid, profile, line) { if (uid != null && profile != null && line != null) library.activate(uid, profile, line) }
+                MainScreen(cloud, library)
+            }
         }
     }
     ScannedPairPrompt(cloud)
@@ -62,54 +71,6 @@ fun Root(cloud: CloudAccount) {
 @Composable
 private fun Loading() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = NucColors.Red) }
-}
-
-private enum class Page { HOME, LINES, PAIR }
-
-/** Stage 1 home: who's watching and the household settings. Browsing and playback come in stage 2. */
-@Composable
-private fun HomeScreen(cloud: CloudAccount) {
-    var page by remember { mutableStateOf(Page.HOME) }
-    BackHandler(page != Page.HOME) { page = Page.HOME }
-    when (page) {
-        Page.LINES -> { LinesScreen(cloud) { page = Page.HOME }; return }
-        Page.PAIR -> { PairTvScreen(cloud) { page = Page.HOME }; return }
-        Page.HOME -> Unit
-    }
-    val profile = cloud.selectedProfile ?: return
-    Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Wordmark(size = 26)
-            Spacer(Modifier.weight(1f))
-            ProfileAvatar(profile, 34.dp, Modifier.clickable { cloud.selectProfile(null) })
-        }
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Hi ${profile.name}", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "Watching through ${cloud.activeLine?.name ?: "your line"}. Browsing and playback arrive in the next update; " +
-                    "your account, profiles, lines and TVs are ready.",
-                color = NucColors.Muted, fontSize = 15.sp
-            )
-            Spacer(Modifier.size(8.dp))
-            MenuRow(Icons.Filled.People, "Switch Profile", profile.name) { cloud.selectProfile(null) }
-            MenuRow(Icons.Filled.Dns, "IPTV Lines", "${cloud.lines.size} in your account") { cloud.error = null; page = Page.LINES }
-            MenuRow(Icons.Filled.Tv, "Pair a TV", if (cloud.pairedTvs.isEmpty()) "No TVs yet" else "${cloud.pairedTvs.size} paired") { page = Page.PAIR }
-            MenuRow(Icons.AutoMirrored.Filled.Logout, "Sign Out", cloud.email ?: "") { cloud.signOut() }
-        }
-    }
-}
-
-@Composable
-private fun MenuRow(icon: ImageVector, title: String, value: String, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().background(NucColors.Surface, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, tint = Color.White)
-        Text(title, Modifier.weight(1f).padding(horizontal = 14.dp), fontWeight = FontWeight.Medium)
-        Text(value, color = NucColors.Muted, fontSize = 13.sp)
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = NucColors.Muted)
-    }
 }
 
 /**

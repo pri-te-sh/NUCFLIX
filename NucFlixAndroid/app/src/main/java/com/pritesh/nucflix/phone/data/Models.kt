@@ -31,7 +31,11 @@ data class CloudProfile(
     val autoplayNext: Boolean,
     val showAdult: Boolean,
     /** Profile Lock: SHA-256 of "nucflix-pin:<profileId>:<pin>", empty when off. */
-    val pinHash: String
+    val pinHash: String,
+    /** Audio / subtitle languages picked last (shared with the TV and iPhone): audio "" = the stream's default;
+     *  subtitles null = the stream's default, "" = off. */
+    val audioLang: String = "",
+    val subLang: String? = null
 ) {
     /** Standard profiles may have a 4-digit PIN; kids profiles never do. */
     val isLocked: Boolean get() = !kids && pinHash.isNotEmpty()
@@ -58,7 +62,9 @@ data class CloudProfile(
                 order = (data["order"] as? Number)?.toInt() ?: 0,
                 autoplayNext = prefs["autoplayNext"] as? Boolean ?: true,
                 showAdult = !kids && (prefs["showAdult"] as? Boolean ?: false),
-                pinHash = prefs["pinHash"] as? String ?: ""
+                pinHash = prefs["pinHash"] as? String ?: "",
+                audioLang = prefs["audioLang"] as? String ?: "",
+                subLang = prefs["subLang"] as? String
             )
         }
     }

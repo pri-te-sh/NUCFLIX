@@ -241,7 +241,7 @@ service cloud.firestore {
     function validDevice(d) {
       return d.keys().hasOnly(['name', 'platform', 'lastSeen', 'nowPlaying'])
         && nonEmpty(d.name, 80)
-        && d.platform in ['ios', 'firetv']
+        && d.platform in ['ios', 'firetv', 'android']
         && d.lastSeen == request.time
         && (!('nowPlaying' in d) || d.nowPlaying == null || d.nowPlaying is map);
     }

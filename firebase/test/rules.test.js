@@ -185,7 +185,8 @@ describe('devices (now playing)', () => {
 
   it('owner phones can write any device doc; shape is enforced', async () => {
     await assertSucceeds(setDoc(doc(phone(), 'users/owner/devices/iphone-1'), device({ name: 'iPhone', platform: 'ios' })));
-    await assertFails(setDoc(doc(phone(), 'users/owner/devices/x'), device({ platform: 'android' })));
+    await assertSucceeds(setDoc(doc(phone(), 'users/owner/devices/android-1'), device({ name: 'Pixel', platform: 'android' })));
+    await assertFails(setDoc(doc(phone(), 'users/owner/devices/x'), device({ platform: 'windows' })));
     await assertFails(setDoc(doc(phone(), 'users/owner/devices/x'), device({ lastSeen: Timestamp.fromMillis(0) })));
   });
 

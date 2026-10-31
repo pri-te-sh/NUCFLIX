@@ -40,7 +40,7 @@ LINK_FLAGS=()
 [[ -f libs/media3-exoplayer-1.10.1.jar && -f tools/r8.jar ]] || ./fetch-libs.sh
 LIBS=(libs/*.jar)
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 \
-    -bootclasspath "$JAR" -classpath "$BT/core-lambda-stubs.jar:${(j/:/)LIBS}" -d "$OUT/classes" $(find src "$OUT/gen" -name '*.java')
+    -bootclasspath "$JAR" -classpath "$BT/core-lambda-stubs.jar:${(j/:/)LIBS}" -d "$OUT/classes" $(find src shared "$OUT/gen" -name '*.java')
 # R8 shrinks Media3 + Guava + Kotlin down to what we use (the stock d8 in build-tools 32 can't read
 # Java 17 / Kotlin 2 class files, so we use the standalone r8.jar from fetch-libs.sh).
 (cd "$OUT/classes" && jar cf ../app-classes.jar .)

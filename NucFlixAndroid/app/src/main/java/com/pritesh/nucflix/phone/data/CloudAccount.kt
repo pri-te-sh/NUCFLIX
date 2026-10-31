@@ -124,7 +124,8 @@ class CloudAccount(context: Context) {
             if (snap == null || this.uid != uid) return@addSnapshotListener
             lines = snap.documents.mapNotNull { CloudLine.from(it.id, it.data ?: emptyMap()) }
                 .sortedBy { it.name.lowercase() }
-            linesLoaded = true
+            // An empty answer from the cache (a slow start) isn't "no lines": wait for the server.
+            if (!snap.metadata.isFromCache || !snap.isEmpty) linesLoaded = true
             ensureFirstProfile()
         }
         listeners += user.collection("members").addSnapshotListener { snap, _ ->
@@ -137,9 +138,10 @@ class CloudAccount(context: Context) {
             if (snap == null || this.uid != uid) return@addSnapshotListener
             profiles = snap.documents.mapNotNull { CloudProfile.from(it.id, it.data ?: emptyMap()) }
                 .sortedWith(compareBy({ it.order }, { it.name }))
-            profilesLoaded = true
+            if (!snap.metadata.isFromCache || !snap.isEmpty) profilesLoaded = true
             if (!snap.metadata.isFromCache) profilesFromServer = true
-            if (selectedProfileId != null && profiles.none { it.id == selectedProfileId }) selectProfile(null)
+            // Only the server can say a profile was deleted (the cache reads as empty on a slow start).
+            if (profilesFromServer && selectedProfileId != null && profiles.none { it.id == selectedProfileId }) selectProfile(null)
             ensureFirstProfile()
         }
     }
@@ -246,6 +248,13 @@ class CloudAccount(context: Context) {
         val uid = uid ?: return
         val ref = db.collection("users").document(uid).collection("profiles").document(profile.id)
         run { ref.set(mapOf("prefs" to mapOf("pinHash" to hash), "updatedAt" to FieldValue.serverTimestamp()), SetOptions.merge()).await() }
+    }
+
+    /** Writes some of the profile's synced settings (keys of its prefs map), e.g. mapOf("showAdult" to true). */
+    fun savePrefs(profile: CloudProfile, prefs: Map<String, Any>) {
+        val uid = uid ?: return
+        db.collection("users").document(uid).collection("profiles").document(profile.id)
+            .set(mapOf("prefs" to prefs, "updatedAt" to FieldValue.serverTimestamp()), SetOptions.merge())
     }
 
     /** Deletes the profile and everything it watched or saved. */
