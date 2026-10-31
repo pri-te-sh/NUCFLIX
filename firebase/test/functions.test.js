@@ -106,8 +106,11 @@ describe('kidsTitles', () => {
     });
     assert.ok(scores['series:11'] >= 0.6);
     assert.ok(scores['movie:12'] < 0.6 && scores['live:13'] < 0.6);
-    const saved = (await getDoc(doc(owner.db, `users/${ownerUid}/kidsTitles/L1`))).data();
-    assert.deepEqual(Object.keys(saved.titles).sort(), ['live:13', 'movie:12', 'series:11']);
+    // Shards by id % 8: 11 -> 3, 12 -> 4, 13 -> 5.
+    for (const [shard, key] of [[3, 'series:11'], [4, 'movie:12'], [5, 'live:13']]) {
+      const saved = (await getDoc(doc(owner.db, `users/${ownerUid}/kidsTitles/L1_${shard}`))).data();
+      assert.deepEqual(Object.keys(saved.titles), [key]);
+    }
   });
 
   it('refuses bad titles, unknown lines and oversized batches', async () => {

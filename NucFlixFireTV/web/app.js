@@ -3190,6 +3190,9 @@
   const INTRO_SCAN = false;
   const INTRO_SCAN_UNTIL = 420; // opening titles usually come within the first 7 minutes
 
+  const LIVE_OK_KEY = 'liveOkAt';
+  const LIVE_OK_FOR = 6 * 3600 * 1000;
+
   const PlayerAI = {
     item: null,
     ref: null,
@@ -3201,6 +3204,7 @@
     pass: 0,          // bumped on every seek: answers to checks started before it are dropped
     creditsHit: null,
     creditsDone: false,
+    creditsHint: null, // seconds from the end where this show's credits started on an earlier episode
     intro: null,
     liveDone: false,
     playingSince: 0,
@@ -3213,7 +3217,16 @@
       this.intro = { start: null, last: null, first: null, candidate: null, done: false };
       if (item.kind === 'live') return;
       this.ref = item.kind === 'movie' ? { kind: 'movie', id: item.streamId } : { kind: 'episode', id: item.episode.episodeId };
-      Cloud.getMarker(this.ref.kind, this.ref.id).then(m => { if (this.item === item) this.marker = m || {}; });
+      Cloud.getMarker(this.ref.kind, this.ref.id).then(async m => {
+        if (this.item !== item) return;
+        // A new episode: where the show's credits started last time narrows the search to a few looks.
+        if (item.kind === 'episode' && !(m && m.creditsAt > 0)) {
+          const s = await Cloud.getMarker('series', item.seriesId);
+          const fromEnd = s && s.duration - s.creditsAt;
+          if (this.item === item && fromEnd > 5 && fromEnd < 900) this.creditsHint = fromEnd;
+        }
+        if (this.item === item) this.marker = m || {};
+      });
     },
 
     stop() {
@@ -3225,6 +3238,7 @@
       this.lastPos = null;
       this.creditsHit = null;
       this.creditsDone = false;
+      this.creditsHint = null;
       this.liveDone = false;
       this.playingSince = 0;
       this.hideSkip();
@@ -3248,7 +3262,7 @@
       if (!this.creditsDone) {
         if (typeof m.creditsAt === 'number' && m.creditsAt > 0) {
           if (pos >= m.creditsAt && pos < dur - 2) this.creditsReached(st);
-        } else if (dur > 300 && pos >= Math.max(dur * 0.8, dur - 600) && st.playing) {
+        } else if (dur > 300 && pos >= this.creditsFrom(dur) && st.playing) {
           this.check('credits', pos, st);
         }
       }
@@ -3261,6 +3275,19 @@
           this.check('intro', pos, st);
         }
       }
+    },
+
+    /** Where the credits search starts: just before this show's usual spot, else the last stretch of the title. */
+    creditsFrom(dur) {
+      if (this.creditsHint != null) return Math.max(dur * 0.5, dur - this.creditsHint - 45);
+      return this.item.kind === 'movie' ? Math.max(dur * 0.85, dur - 600) : Math.max(dur * 0.8, dur - 600);
+    },
+
+    /** Gap between looks: tight around the show's usual spot, sparse elsewhere (each look is an AI call). */
+    checkStep(task, pos, dur) {
+      if (task !== 'credits') return 10000;
+      if (this.creditsHint != null && pos <= dur - this.creditsHint + 60) return 8000;
+      return this.item.kind === 'movie' ? 30000 : 15000;
     },
 
     /** A jump (scrubbing, Skip, resume) breaks the run of frames the evidence was built on: start over. */
@@ -3288,7 +3315,7 @@
       const it = this.item;
       const pass = this.pass;
       this.busy = true;
-      this.nextCheckAt = Date.now() + 10000;
+      this.nextCheckAt = Date.now() + this.checkStep(task, pos, st.duration || 0);
       try {
         const f = await Smart.frame();
         if (!f || this.item !== it) return;
@@ -3315,6 +3342,8 @@
       }
       this.marker.creditsAt = this.creditsHit;
       Cloud.saveMarker(this.ref.kind, this.ref.id, { creditsAt: this.creditsHit, duration: st.duration });
+      // Remembered for the show too, so its other episodes only look near the same spot.
+      if (this.item.kind === 'episode') Cloud.saveMarker('series', this.item.seriesId, { creditsAt: this.creditsHit, duration: st.duration });
       this.creditsReached(st);
     },
 
@@ -3387,8 +3416,11 @@
       if (!this.playingSince) { this.playingSince = Date.now(); return; }
       if (Date.now() - this.playingSince < 10000 || this.busy || Smart.disabled) return;
       this.liveDone = true;
-      this.busy = true;
       const it = this.item;
+      // A channel that looked fine recently isn't checked again (flicking through channels was an AI call each).
+      const okAt = Store.get(LIVE_OK_KEY, {});
+      if (Date.now() - (okAt[it.streamId] || 0) < LIVE_OK_FOR) return;
+      this.busy = true;
       (async () => {
         try {
           const a = await Smart.frame();
@@ -3398,7 +3430,11 @@
           const r = await Smart.frameCheck('live', [a.b64, b.b64], it.title);
           if (!r || this.item !== it) return;
           const p = (r.probabilities || {})[r.label] || 0;
-          if (r.label && r.label !== 'ok' && p >= 0.7 && r.confidence >= 0.5) this.offAir(r.label);
+          if (r.label && r.label !== 'ok' && p >= 0.7 && r.confidence >= 0.5) { this.offAir(r.label); return; }
+          const seen = Store.get(LIVE_OK_KEY, {});
+          seen[it.streamId] = Date.now();
+          // Keep the newest few hundred channels.
+          Store.set(LIVE_OK_KEY, Object.fromEntries(Object.entries(seen).sort((x, y) => y[1] - x[1]).slice(0, 300)));
         } finally {
           this.busy = false;
         }
@@ -3442,6 +3478,7 @@
     scrub: null, // { pos, origin, last, streak, shownId, thumbTimer } while scrubbing the timeline
     thumbSeq: 0,
     lastSave: 0,
+    savedPos: 0,
     nextTimer: null,
     nextShownFor: null,
     aspect: 'fit',
@@ -3457,6 +3494,7 @@
       this.item = item;
       this.st = { event: 'loading', buffering: true, position: item.resume || 0, duration: 0 };
       this.lastSave = Date.now();
+      this.savedPos = item.resume || 0;
       this.speed = 1;
       Modal.closeAll();
       if (S.screen !== 'player') Router.go('player', {}, { noFocus: true });
@@ -3621,7 +3659,9 @@
         if (this.item.kind === 'episode' && this.nextEpisode() && S.prefs.autoplayNext) { this.playNext(); return; }
         if (this.item.kind !== 'live') { this.exit(); return; }
       }
-      if (st.event === 'tick' && Date.now() - this.lastSave > 5000) this.saveProgress();
+      // Ticks keep coming while paused: record only once the position moved (as the iPhone does), else a paused
+      // title rewrote the same position every 20 s.
+      if (st.event === 'tick' && Date.now() - this.lastSave > 5000 && Math.abs((st.position || 0) - this.savedPos) >= 4) this.saveProgress();
       PlayerAI.tick(this.st);
       if (this.item.kind === 'episode' && S.prefs.autoplayNext && st.duration > 120 &&
         st.duration - st.position <= 25 && this.nextShownFor !== this.item.uid && this.nextEpisode()) {
@@ -3638,6 +3678,7 @@
       this.lastSave = Date.now();
       if (!st.duration && !ended) return;
       const pos = ended || PlayerAI.pastCredits(st) ? (st.duration || 0) : (st.position || 0);
+      this.savedPos = st.position || 0;
       recordProgress(it, pos, st.duration || 0);
     },
 

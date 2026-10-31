@@ -108,6 +108,7 @@ final class SmartAI {
         var creditsAt: Double?
         var introStart: Double?
         var introEnd: Double?
+        var duration: Double?
     }
 
     func marker(lineID: String, kind: String, id: String) async -> ContentMarker {
@@ -115,7 +116,7 @@ final class SmartAI {
         let ref = db.collection("users").document(uid).collection("markers").document("\(lineID):\(kind):\(id)")
         guard let d = try? await ref.getDocument().data() else { return ContentMarker() }
         let num = { (k: String) in (d[k] as? NSNumber)?.doubleValue }
-        return ContentMarker(creditsAt: num("creditsAt"), introStart: num("introStart"), introEnd: num("introEnd"))
+        return ContentMarker(creditsAt: num("creditsAt"), introStart: num("introStart"), introEnd: num("introEnd"), duration: num("duration"))
     }
 
     func saveMarker(lineID: String, kind: String, id: String, duration: Double, fields: [String: Double]) {
@@ -237,37 +238,43 @@ final class SmartAI {
     // Kids title scores (users/{uid}/kidsTitles/{lineId}, written by the kidsTitles function): 0-1, how suitable a
     // title is for a child under 12. Kids profiles show only titles scored at least `kidsMinimum`.
     nonisolated static let kidsMinimum = 0.6
+    /// The scores live in `kidsShards` documents per line, `{lineId}_{id % kidsShards}` (see the function).
+    nonisolated static let kidsShards = 8
     private(set) var kidsScores: [String: Double] = [:]
+    private var kidsShardScores: [Int: [String: Double]] = [:]
     private var kidsLineID: String?
-    private var kidsListener: ListenerRegistration?
+    private var kidsListeners: [ListenerRegistration] = []
     private(set) var fillingKids = false
 
     func kidsScore(_ kind: String, _ id: Int) -> Double? { kidsScores["\(kind):\(id)"] }
 
     func startKids(lineID: String, onChange: @escaping () -> Void) {
-        if kidsLineID == lineID, kidsListener != nil { return }
+        if kidsLineID == lineID, !kidsListeners.isEmpty { return }
         stopKids()
         guard let uid else { return }
         kidsLineID = lineID
-        kidsListener = db.collection("users").document(uid).collection("kidsTitles").document(lineID)
-            .addSnapshotListener { [weak self] snap, _ in
+        let col = db.collection("users").document(uid).collection("kidsTitles")
+        for shard in 0..<Self.kidsShards {
+            kidsListeners.append(col.document("\(lineID)_\(shard)").addSnapshotListener { [weak self] snap, _ in
                 Task { @MainActor in
                     guard let self, self.kidsLineID == lineID else { return }
                     let raw = snap?.data()?["titles"] as? [String: Any] ?? [:]
                     let parsed = raw.compactMapValues { ($0 as? NSNumber)?.doubleValue }
-                    if parsed != self.kidsScores {
-                        self.kidsScores = parsed
-                        onChange()
-                    }
+                    guard parsed != self.kidsShardScores[shard] else { return }
+                    self.kidsShardScores[shard] = parsed
+                    self.kidsScores = self.kidsShardScores.values.reduce(into: [:]) { $0.merge($1) { _, new in new } }
+                    onChange()
                 }
-            }
+            })
+        }
     }
 
     func stopKids() {
-        kidsListener?.remove()
-        kidsListener = nil
+        kidsListeners.forEach { $0.remove() }
+        kidsListeners = []
         kidsLineID = nil
         kidsScores = [:]
+        kidsShardScores = [:]
     }
 
     /// Sends titles without a score to the AI, 40 per call; `pending` ({kind, id, title}) is re-read every round.
@@ -278,8 +285,11 @@ final class SmartAI {
             defer { fillingKids = false; done() }
             for _ in 0..<400 {
                 guard kidsLineID == lineID, !disabled else { return }
-                let batch = Array(pending().filter { kidsScores["\($0["kind"] ?? ""):\($0["id"] ?? "")"] == nil }.prefix(40))
-                guard !batch.isEmpty else { return }
+                // One batch = one shard of the saved scores (id % kidsShards, as the function stores them).
+                let todo = pending().filter { kidsScores["\($0["kind"] ?? ""):\($0["id"] ?? "")"] == nil }
+                guard let firstID = todo.first?["id"] as? Int else { return }
+                let shard = firstID % Self.kidsShards
+                let batch = Array(todo.filter { ($0["id"] as? Int ?? -1) % Self.kidsShards == shard }.prefix(40))
                 guard let res = await call("kidsTitles", ["lineId": lineID, "items": batch]) else { return }
                 for (key, value) in res["scores"] as? [String: Any] ?? [:] {
                     if let n = value as? NSNumber { kidsScores[key] = n.doubleValue }
@@ -384,6 +394,8 @@ final class PlayerAI {
     @ObservationIgnored private var pass = 0
     @ObservationIgnored private var creditsHit: Double?
     @ObservationIgnored private var creditsDone = false
+    /// Seconds from the end where this show's credits started on an earlier episode.
+    @ObservationIgnored private var creditsHint: Double?
     @ObservationIgnored private var introStart: Double?
     @ObservationIgnored private var introLast: Double?
     @ObservationIgnored private var introFirstCheck: Double?
@@ -393,6 +405,8 @@ final class PlayerAI {
     @ObservationIgnored private var playingSince: Date?
 
     private static let checkInterval: TimeInterval = 10
+    private static let liveOkKey = "nucflix.liveOkAt"
+    private static let liveOkFor: TimeInterval = 6 * 3600
     private static let confirmInterval: TimeInterval = 3
     /// Finding intros frame by frame doesn't work on real shows (an opening montage reads as "a scene"), so the
     /// scan is off; saved intro markers still show Skip Intro. Planned instead: matching the opening across
@@ -417,6 +431,14 @@ final class PlayerAI {
         Task { @MainActor in
             let m = await SmartAI.shared.marker(lineID: ref.lineID, kind: ref.kind, id: ref.id)
             guard self.generation == gen else { return }
+            // A new episode: where the show's credits started last time narrows the search to a few looks.
+            if item.contentType == .seriesEpisode, m.creditsAt == nil, let seriesID = item.seriesID {
+                let s = await SmartAI.shared.marker(lineID: ref.lineID, kind: "series", id: String(seriesID))
+                guard self.generation == gen else { return }
+                if let at = s.creditsAt, let duration = s.duration, duration - at > 5, duration - at < 900 {
+                    self.creditsHint = duration - at
+                }
+            }
             self.marker = m
         }
     }
@@ -432,6 +454,7 @@ final class PlayerAI {
         lastPosition = nil
         creditsHit = nil
         creditsDone = false
+        creditsHint = nil
         introStart = nil
         introLast = nil
         introFirstCheck = nil
@@ -464,7 +487,7 @@ final class PlayerAI {
         if !creditsDone {
             if let at = m.creditsAt, at > 0 {
                 if position >= at && position < duration - 2 { creditsReached() }
-            } else if duration > 300 && position >= max(duration * 0.8, duration - 600) && playing {
+            } else if duration > 300 && position >= creditsFrom(duration) && playing {
                 check("credits", position: position, duration: duration)
             }
         }
@@ -476,6 +499,19 @@ final class PlayerAI {
         } else if Self.introScan && !introDone && position < Self.introScanUntil && playing {
             check("intro", position: position, duration: duration)
         }
+    }
+
+    /// Where the credits search starts: just before this show's usual spot, else the last stretch of the title.
+    private func creditsFrom(_ duration: Double) -> Double {
+        if let hint = creditsHint { return max(duration * 0.5, duration - hint - 45) }
+        return item?.contentType == .movie ? max(duration * 0.85, duration - 600) : max(duration * 0.8, duration - 600)
+    }
+
+    /// Gap between looks: tight around the show's usual spot, sparse elsewhere (each look is an AI call).
+    private func checkStep(_ task: String, position: Double, duration: Double) -> TimeInterval {
+        guard task == "credits" else { return Self.checkInterval }
+        if let hint = creditsHint, position <= duration - hint + 60 { return 8 }
+        return item?.contentType == .movie ? 30 : 15
     }
 
     /// A jump (scrubbing, skipping, resuming) breaks the run of frames the evidence was built on: start over.
@@ -504,7 +540,7 @@ final class PlayerAI {
     private func check(_ task: String, position: Double, duration: Double) {
         guard !busy, Date() >= nextCheckAt, !SmartAI.shared.disabled, let grabFrame, let item else { return }
         busy = true
-        nextCheckAt = Date().addingTimeInterval(Self.checkInterval)
+        nextCheckAt = Date().addingTimeInterval(checkStep(task, position: position, duration: duration))
         let gen = generation
         let pass = self.pass
         let scene = self.scene
@@ -535,7 +571,13 @@ final class PlayerAI {
             return
         }
         marker?.creditsAt = hit
-        if let ref { SmartAI.shared.saveMarker(lineID: ref.lineID, kind: ref.kind, id: ref.id, duration: duration, fields: ["creditsAt": hit]) }
+        if let ref {
+            SmartAI.shared.saveMarker(lineID: ref.lineID, kind: ref.kind, id: ref.id, duration: duration, fields: ["creditsAt": hit])
+            // Remembered for the show too, so its other episodes only look near the same spot.
+            if item?.contentType == .seriesEpisode, let seriesID = item?.seriesID {
+                SmartAI.shared.saveMarker(lineID: ref.lineID, kind: "series", id: String(seriesID), duration: duration, fields: ["creditsAt": hit])
+            }
+        }
         creditsReached()
     }
 
@@ -589,6 +631,10 @@ final class PlayerAI {
         }
         guard Date().timeIntervalSince(since) >= 10, !busy, !SmartAI.shared.disabled, let grabFrame, let item else { return }
         liveDone = true
+        // A channel that looked fine recently isn't checked again (flicking through channels was an AI call each).
+        let channel = String(item.streamID ?? 0)
+        let okAt = UserDefaults.standard.dictionary(forKey: Self.liveOkKey) as? [String: Double] ?? [:]
+        if Date().timeIntervalSince1970 - (okAt[channel] ?? 0) < Self.liveOkFor { return }
         busy = true
         let gen = generation
         Task { @MainActor in
@@ -598,7 +644,14 @@ final class PlayerAI {
             guard self.generation == gen, let b = await grabFrame(), self.generation == gen,
                   let r = await SmartAI.shared.frameCheck(task: "live", images: [a, b], title: item.title),
                   self.generation == gen else { return }
-            guard r.label != "ok", r.p(r.label) >= 0.7, r.confidence >= 0.5 else { return }
+            guard r.label != "ok", r.p(r.label) >= 0.7, r.confidence >= 0.5 else {
+                var seen = UserDefaults.standard.dictionary(forKey: Self.liveOkKey) as? [String: Double] ?? [:]
+                seen[channel] = Date().timeIntervalSince1970
+                // Keep the newest few hundred channels.
+                if seen.count > 300 { seen = Dictionary(uniqueKeysWithValues: seen.sorted { $0.value > $1.value }.prefix(300).map { ($0.key, $0.value) }) }
+                UserDefaults.standard.set(seen, forKey: Self.liveOkKey)
+                return
+            }
             self.offAirMessage = [
                 "black": "This channel is showing a black screen.",
                 "frozen": "This channel’s picture looks frozen.",

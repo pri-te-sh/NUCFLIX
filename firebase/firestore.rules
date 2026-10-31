@@ -231,7 +231,7 @@ service cloud.firestore {
       return key.size() <= 120
         && d.keys().hasOnly(['lineId', 'kind', 'creditsAt', 'introStart', 'introEnd', 'duration', 'source', 'updatedAt'])
         && nonEmpty(d.lineId, 60)
-        && d.kind in ['movie', 'episode']
+        && d.kind in ['movie', 'episode', 'series'] // series: where its credits started on an episode
         && d.duration is number && d.duration > 0
         && optNum(d, 'creditsAt') && optNum(d, 'introStart') && optNum(d, 'introEnd')
         && d.source in ['ai', 'timeline']

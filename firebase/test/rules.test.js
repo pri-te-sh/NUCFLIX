@@ -282,6 +282,7 @@ describe('AI markers and category tags', () => {
     await pairedHousehold();
     await assertFails(setDoc(doc(tv('tv9'), 'users/owner/markers/L1:episode:1'), marker()));
     await assertFails(getDoc(doc(phone('intruder'), 'users/owner/markers/L1:episode:1')));
+    await assertSucceeds(setDoc(doc(tv(), 'users/owner/markers/L1:series:7'), { lineId: 'L1', kind: 'series', creditsAt: 1302.5, duration: 1400, source: 'ai', updatedAt: serverTimestamp() }));
     await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ kind: 'live' })));
     await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ source: 'guess' })));
     await assertFails(setDoc(doc(tv(), 'users/owner/markers/L1:episode:1'), marker({ creditsAt: 'soon' })));

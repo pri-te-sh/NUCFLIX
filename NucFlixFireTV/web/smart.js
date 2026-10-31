@@ -158,8 +158,11 @@ const Smart = (() => {
       this.running = true;
       try {
         for (let round = 0; round < 400 && this.lineId === lineId && !disabled; round++) {
-          const batch = pending().filter(t => this.score(t.kind, t.id) == null).slice(0, 40);
-          if (!batch.length) break;
+          // One batch = one shard of the saved scores (id % 8, as the kidsTitles function stores them).
+          const todo = pending().filter(t => this.score(t.kind, t.id) == null);
+          if (!todo.length) break;
+          const shard = Number(todo[0].id) % 8;
+          const batch = todo.filter(t => Number(t.id) % 8 === shard).slice(0, 40);
           const res = await call('kidsTitles', { lineId, items: batch });
           if (!res) break;
           Object.assign(this.map, res.scores || {});

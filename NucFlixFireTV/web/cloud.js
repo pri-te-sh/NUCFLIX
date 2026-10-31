@@ -153,7 +153,7 @@ const Cloud = (() => {
   }
 
   /**
-   * Streams the profile's favorites and progress for the line (filtered client-side by lineId).
+   * Streams the profile's favorites and progress for the line (the query fetches only that line's documents).
    * Resolves once both have delivered their first answer (or failed), so Home can wait for them.
    */
   function startSession(profileId, lineId, { onFavorites, onProgress }) {
@@ -172,8 +172,8 @@ const Cloud = (() => {
       return () => { if (called) return; called = true; if (--pending === 0) done(); };
     };
     const favLoaded = once(), progLoaded = once();
-    profileUnsubs.push(ref.collection('favorites').onSnapshot(s => { onFavorites(mine(s.docs)); favLoaded(); }, favLoaded));
-    profileUnsubs.push(ref.collection('progress').orderBy('updatedAt', 'desc').limit(150)
+    profileUnsubs.push(ref.collection('favorites').where('lineId', '==', lineId).onSnapshot(s => { onFavorites(mine(s.docs)); favLoaded(); }, favLoaded));
+    profileUnsubs.push(ref.collection('progress').where('lineId', '==', lineId).orderBy('updatedAt', 'desc').limit(150) // index: firestore.indexes.json
       .onSnapshot(s => { onProgress(mine(s.docs)); progLoaded(); }, progLoaded));
     return ready;
   }
@@ -310,19 +310,29 @@ const Cloud = (() => {
   }
 
   /**
-   * Live kids-suitability scores for a line's titles: cb({ 'movie:12': 0.95, ... }) (see the kidsTitles function).
-   * Resolves after the first answer has been handed to cb (or the read failed).
+   * Live kids-suitability scores for a line's titles: cb({ 'movie:12': 0.95, ... }), merged from the line's
+   * KIDS_SHARDS documents (see the kidsTitles function). Resolves once every shard has answered (or failed).
    */
-  let kidsUnsub = null;
+  const KIDS_SHARDS = 8;
+  let kidsUnsubs = [];
   function watchKidsTitles(lineId, cb) {
-    if (kidsUnsub) kidsUnsub();
-    kidsUnsub = null;
+    kidsUnsubs.forEach(u => u());
+    kidsUnsubs = [];
     if (!cb || !db || !owner || !lineId) return Promise.resolve();
+    const shards = new Array(KIDS_SHARDS).fill(null);
+    const merged = () => Object.assign({}, ...shards.map(s => s || {}));
     return new Promise(resolve => {
-      kidsUnsub = db.doc(`users/${owner}/kidsTitles/${lineId}`).onSnapshot(d => {
-        cb((d.exists && d.get('titles')) || {});
-        resolve();
-      }, () => resolve());
+      let waiting = KIDS_SHARDS;
+      // Until every shard has answered once nothing is reported; after that, every change is.
+      const update = () => { if (waiting === 0) cb(merged()); };
+      const firstAnswer = () => { if (--waiting === 0) { cb(merged()); resolve(); } };
+      for (let i = 0; i < KIDS_SHARDS; i++) {
+        let first = true;
+        kidsUnsubs.push(db.doc(`users/${owner}/kidsTitles/${lineId}_${i}`).onSnapshot(d => {
+          shards[i] = (d.exists && d.get('titles')) || {};
+          if (first) { first = false; firstAnswer(); } else update();
+        }, () => { if (first) { first = false; firstAnswer(); } }));
+      }
     });
   }
 

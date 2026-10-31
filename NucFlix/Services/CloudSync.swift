@@ -32,13 +32,15 @@ final class CloudSync {
     }
 
     func start() {
-        listeners.append(profileRef.collection("favorites").addSnapshotListener { [weak self] snap, _ in
+        // Only this line's documents are fetched (a profile keeps separate lists per IPTV line).
+        listeners.append(profileRef.collection("favorites").whereField("lineId", isEqualTo: lineID).addSnapshotListener { [weak self] snap, _ in
             Task { @MainActor in
                 guard let self, let snap else { return }
                 self.applyFavorites(snap.documents)
             }
         })
-        listeners.append(profileRef.collection("progress").order(by: "updatedAt", descending: true).limit(to: 120)
+        listeners.append(profileRef.collection("progress").whereField("lineId", isEqualTo: lineID)
+            .order(by: "updatedAt", descending: true).limit(to: 120) // index: firebase/firestore.indexes.json
             .addSnapshotListener { [weak self] snap, _ in
                 Task { @MainActor in
                     guard let self, let snap else { return }

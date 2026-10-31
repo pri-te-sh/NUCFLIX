@@ -43,6 +43,21 @@ export const GENRES = {
 
 // ------------------------------------------------------------------ helpers
 
+// Pairings and lines that were found to exist, remembered per instance for a few minutes: a TV makes many calls in
+// a row (credits checks, title batches) and each used to re-read the same documents. An unpaired TV can keep using
+// the AI (not the household's data) for at most this long.
+const SEEN_FOR = 5 * 60 * 1000;
+const seen = new Map();
+
+async function exists(path) {
+  const at = seen.get(path);
+  if (at && Date.now() - at < SEEN_FOR) return true;
+  if (!(await db.doc(path).get()).exists) return false;
+  if (seen.size > 1000) seen.clear();
+  seen.set(path, Date.now());
+  return true;
+}
+
 /** Returns the household (owner uid) the caller belongs to, or throws. */
 async function household(request) {
   const auth = request.auth;
@@ -50,8 +65,7 @@ async function household(request) {
   if (auth.token.firebase?.sign_in_provider !== 'anonymous') return auth.uid;
   const owner = String(request.data?.ownerUid || '');
   if (!/^[\w-]{1,128}$/.test(owner)) throw new HttpsError('permission-denied', 'This TV is not paired.');
-  const member = await db.doc(`users/${owner}/members/${auth.uid}`).get();
-  if (!member.exists) throw new HttpsError('permission-denied', 'This TV is not paired.');
+  if (!(await exists(`users/${owner}/members/${auth.uid}`))) throw new HttpsError('permission-denied', 'This TV is not paired.');
   return owner;
 }
 
@@ -217,7 +231,7 @@ export const classifyCategories = onCall(options, async request => {
       || !cats.every(c => str(String(c?.id ?? ''), 40) && str(c?.name, 120) && ['live', 'movie', 'series'].includes(c?.kind))) {
     throw new HttpsError('invalid-argument', `Send 1-${MAX_CATEGORIES} categories {id, name, kind}.`);
   }
-  if (!(await db.doc(`users/${owner}/lines/${lineId}`).get()).exists) throw new HttpsError('not-found', 'Unknown line.');
+  if (!(await exists(`users/${owner}/lines/${lineId}`))) throw new HttpsError('not-found', 'Unknown line.');
   await spend(owner, 1);
 
   const state = 'Categories from an IPTV provider (live channels, movies and series). Names often start with a country '
@@ -263,11 +277,15 @@ export const classifyCategories = onCall(options, async request => {
 // ------------------------------------------------------------------ kidsTitles
 
 const MAX_TITLES = 40;
+// Scores are spread over KIDS_SHARDS documents per line, users/{owner}/kidsTitles/{lineId}_{id % KIDS_SHARDS}: a
+// batch rewrites (and every listening device re-downloads) one small shard instead of one ever-growing document,
+// and the 1 MiB document limit stops mattering. The apps send each batch from a single shard.
+export const KIDS_SHARDS = 8;
 
 /**
  * Rates titles for kids profiles: 0-1, how suitable each is for a child under 12 to watch alone. The apps only
  * show a kids profile titles scored at least 0.6, on top of their deterministic rules, so unknown titles stay
- * hidden. Scores are shared by the household's kids profiles in users/{owner}/kidsTitles/{lineId}.
+ * hidden. Scores are shared by the household's kids profiles (see KIDS_SHARDS).
  */
 export const kidsTitles = onCall(options, async request => {
   const owner = await household(request);
@@ -278,7 +296,7 @@ export const kidsTitles = onCall(options, async request => {
       || !items.every(t => /^\d{1,12}$/.test(String(t?.id ?? '')) && str(t?.title, 160) && ['live', 'movie', 'series'].includes(t?.kind))) {
     throw new HttpsError('invalid-argument', `Send 1-${MAX_TITLES} titles {kind, id, title}.`);
   }
-  if (!(await db.doc(`users/${owner}/lines/${lineId}`).get()).exists) throw new HttpsError('not-found', 'Unknown line.');
+  if (!(await exists(`users/${owner}/lines/${lineId}`))) throw new HttpsError('not-found', 'Unknown line.');
   await spend(owner, 1);
 
   const state = 'Titles from an IPTV catalog: movies, TV series and live TV channels. Names may carry a country or '
@@ -299,8 +317,18 @@ export const kidsTitles = onCall(options, async request => {
   const answers = await decide(state, questions);
 
   const scores = {};
-  items.forEach((t, i) => { scores[`${t.kind}:${t.id}`] = round(answers[`title_${i}`]?.noul ?? 0); });
-  await db.doc(`users/${owner}/kidsTitles/${lineId}`).set({ titles: scores, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  const shards = {};
+  items.forEach((t, i) => {
+    const key = `${t.kind}:${t.id}`;
+    scores[key] = round(answers[`title_${i}`]?.noul ?? 0);
+    const shard = Number(t.id) % KIDS_SHARDS;
+    (shards[shard] = shards[shard] || {})[key] = scores[key];
+  });
+  const batch = db.batch();
+  for (const [shard, titles] of Object.entries(shards)) {
+    batch.set(db.doc(`users/${owner}/kidsTitles/${lineId}_${shard}`), { titles, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  }
+  await batch.commit();
   return { scores };
 });
 
