@@ -830,7 +830,7 @@ img.fit { object-fit: contain !important; object-position: center !important; }
 .modal-sheet.cat-browser { width: 1520px; max-height: 960px; }
 .cb-panes { display: grid; grid-template-columns: 500px 1fr; gap: 32px; min-height: 0; }
 .cb-groups, .cb-list {
-  overflow: hidden; max-height: 720px; display: flex; flex-direction: column; gap: 8px;
+  overflow: hidden; height: 720px; display: flex; /* fixed, so the centred sheet doesn't jump with list length */ flex-direction: column; gap: 8px;
   padding: 8px 10px; margin: 0 -10px;
 }
 .cb-section {
