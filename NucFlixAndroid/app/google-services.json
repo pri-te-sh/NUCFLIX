@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "271948733632",
+    "project_id": "nucflix-ad6e1",
+    "storage_bucket": "nucflix-ad6e1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:271948733632:android:fdd6246e7bc84106266125",
+        "android_client_info": {
+          "package_name": "com.pritesh.nucflix.phone"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "271948733632-tcelj70dbltpbfmj7gts2bul0924e7qq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.pritesh.nucflix.phone",
+            "certificate_hash": "02792719f86e6ad00b2a5ec14c73940e0770faf5"
+          }
+        },
+        {
+          "client_id": "271948733632-4mtmqf55vrdttouunpn61vdk7goc6r3c.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBA_Y2WHzhQ4H6MEkbyhoOsfqYFnP7A8s0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "271948733632-4mtmqf55vrdttouunpn61vdk7goc6r3c.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "271948733632-f9b698hdsjh9qlsuabpn93j8tvltpt77.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.priteshbhavsar.XtreamIPTV"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
