@@ -117,6 +117,8 @@
       loaded: false, version: 0,
       liveCats: [], live: [], vodCats: [], movies: [], seriesCats: [], series: [],
       liveById: new Map(), movieById: new Map(), seriesById: new Map(),
+      // Categories the adult / kids filter took out (so taste events from them can be ignored too).
+      blockedCats: { live: new Set(), movie: new Set(), series: new Set() },
       catName: { live: {}, vod: {}, series: {} },
       index: new CatalogSearchIndex()
     };
@@ -742,7 +744,7 @@
     const kids = isKids();
     const hidden = (kind, x) => {
       const tag = Smart.Tags.get(kind, x.categoryId);
-      if (!showAdult && (ADULT_RE.test(x.categoryName) || (tag && tag.adult > 0.7))) return true;
+      if (!showAdult && (ADULT_RE.test(x.categoryName) || (tag && (tag.adult > 0.7 || tag.genre === 'adult')))) return true;
       return kids && !!tag && tag.kids < 0.5;
     };
     const blocked = { live: new Set(), movie: new Set(), series: new Set() };
@@ -758,6 +760,7 @@
     cat.live = r.live.filter(x => !x.isSectionDivider && ok('live')(x));
     cat.movies = r.movies.filter(ok('movie'));
     cat.series = r.series.filter(ok('series'));
+    cat.blockedCats = blocked;
     cat.live.forEach(x => cat.liveById.set(x.streamId, x));
     cat.movies.forEach(x => cat.movieById.set(x.streamId, x));
     cat.series.forEach(x => cat.seriesById.set(x.seriesId, x));
@@ -871,10 +874,23 @@
   const upNext = new Map();
 
   /** Continue Watching: titles in progress, plus "Up next" for series whose latest episode is finished. */
+  /**
+   * A watch-history entry the adult / kids filter should keep off screen (the history itself keeps it). While
+   * filtering, only titles still in the filtered catalog show: the history is synced from other devices and may
+   * name things this catalog copy (cached, or filtered) doesn't have.
+   */
+  function hiddenByFilter(h) {
+    if (S.prefs.showAdult && !isKids()) return false;
+    if (ADULT_RE.test(h.title || '')) return true;
+    if (h.contentType === 'movie') return !S.cat.movieById.has(Number(h.streamID));
+    if (h.contentType === 'series') return !S.cat.seriesById.has(Number(h.seriesID));
+    return !S.cat.liveById.has(Number(h.streamID));
+  }
+
   function continueWatching() {
     const rows = [];
     for (const h of S.history) {
-      if (h.contentType === 'live') continue;
+      if (h.contentType === 'live' || hiddenByFilter(h)) continue;
       if (resumeFor(h) > 0) { rows.push(h); continue; }
       if (h.contentType === 'series' && isWatched(h.position, h.duration)) {
         const next = upNext.get(String(h.seriesID));
@@ -1788,7 +1804,8 @@
 
     buildFeed() {
       this.feed = RecommendationEngine.buildFeed({
-        events: S.taste,
+        // Hidden categories mustn't steer picks or show up as "Because you watched …".
+        events: S.taste.filter(e => !(S.cat.blockedCats[e.content] && S.cat.blockedCats[e.content].has(e.categoryID))),
         movies: S.cat.movies,
         series: S.cat.series,
         vodCategoryNames: S.cat.catName.vod,
