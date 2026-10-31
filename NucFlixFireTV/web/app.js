@@ -11,6 +11,12 @@
   const navEl = $('#nav');
   const modalLayer = $('#modal-layer');
   const Native = window.NucFlixNative || null;
+  // Closes the app: the Android bridge, or the Vega shell's host hook (NucFlixVega/web-shim/vega-shim.js).
+  const exitApp = () => {
+    if (Native) Native.exitApp();
+    else if (window.NucFlixHost) window.NucFlixHost.exitApp();
+    else toast('Exit');
+  };
 
   // ------------------------------------------------------------------ Utilities
 
@@ -2528,7 +2534,7 @@
               ${setting('set-profile', 'Profile', S.cloud.profile ? S.cloud.profile.name : '—', 'Who’s watching? Profiles are managed in the NucFlix iPhone app', () => (Cloud.paired ? Who.show() : unpairTV()))}
               ${setting('set-line', 'IPTV Line', S.cloud.line ? S.cloud.line.name : '—', `${S.cloud.lines.length} line${S.cloud.lines.length === 1 ? '' : 's'} in your account`, () => chooseLine())}
               ${Cloud.paired ? setting('set-unpair', 'Unpair This TV', Cloud.ownerName || '', 'Disconnect from your NucFlix account', () => confirmModal({ title: 'Unpair this TV?', message: 'It will need a new code from your iPhone to watch again.', okLabel: 'Unpair', danger: true, onOk: () => unpairTV() })) : setting('set-pair', 'Pair This TV', '', 'Connect to your NucFlix account', () => unpairTV())}
-              ${setting('set-exit', 'Exit NucFlix', '', 'Close the app', () => Native ? Native.exitApp() : toast('Exit'))}
+              ${setting('set-exit', 'Exit NucFlix', '', 'Close the app', exitApp)}
             </div>
           </div>
         </div>`);
@@ -3419,7 +3425,7 @@
   function exitConfirm() {
     confirmModal({
       title: 'Exit NucFlix?', okLabel: 'Exit', cancelLabel: 'Keep Watching', danger: true,
-      onOk: () => { if (Native) Native.exitApp(); }
+      onOk: exitApp
     });
   }
 

@@ -1,0 +1,77 @@
+schema-version = 1
+
+[package]
+title = "NucFlix"
+version = "0.1.0"
+# Floor so local builds pass vpt validate; pass an increasing --build-number for every Appstore upload.
+build-number = 1
+id = "com.pritesh.nucflix"
+
+[os.version]
+min = "2.0"
+target = "2.0"
+
+[needs]
+[components]
+[[components.interactive]]
+id = "com.pritesh.nucflix.main"
+runtime-module = "/com.amazon.kepler.runtime.react_native_kepler_4@IReactNativeKepler_0"
+launch-type = "singleton"
+categories = ["com.amazon.category.main"]
+
+[wants]
+# Web renderer service for rendering web content
+[[wants.service]]
+id = "com.amazon.webview.renderer_service"
+
+# If Web App needs keyboard support
+[[wants.service]]
+id = "com.amazon.inputmethod.service"
+
+# If Web App needs video playback
+[[wants.service]]
+id = "com.amazon.media.server"
+
+# Required for emitting metrics from video playback
+[[wants.service]]
+id = "com.amazon.mediametrics.service"
+
+# Required for video playback on stable APIs
+[[wants.service]]
+id = "com.amazon.mediabuffer.service"
+[[wants.service]]
+id = "com.amazon.mediatransform.service"
+
+# If Web App needs audio playback
+[[wants.service]]
+id = "com.amazon.audio.stream"
+
+# Required for audio management features to work in WebView, features like audio focus, volume control 
+[[wants.service]]
+id = "com.amazon.audio.control"
+
+# To enable accessibility support for your app, we recommend you add the UCC service with the Service Registrar
+[[wants.service]]
+id = "com.amazon.kepler.ucc.publisher"
+
+# Uncomment below section to enable encrypted media playback (DRM content)
+# [[wants.service]]
+# id = "com.amazon.drm.key"
+# [[wants.service]]
+# id = "com.amazon.drm.crypto"
+# [[needs.privilege]]
+# id = "com.amazon.privilege.security.file-sharing"
+
+# Enable Group-IPC to access media services
+[[wants.service]]
+id = "com.amazon.gipc.uuid.*"
+[offers]
+[[offers.service]]
+id = "com.amazon.gipc.uuid.*" 
+
+# You may add other services as needed
+
+# IPTV panels, their streams and much of their artwork are plain http:// on whatever host the user's
+# line points at, so cleartext can't be limited to a fixed list (WebView 4.x blocks http by default).
+[network-traffic-policy.cleartext]
+allowed-domains = ["*"]
