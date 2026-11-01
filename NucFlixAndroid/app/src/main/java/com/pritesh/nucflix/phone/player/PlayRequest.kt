@@ -33,9 +33,12 @@ object Playback {
         context.startActivity(Intent(context, PlayerActivity::class.java))
     }
 
+    /** A finished download plays from the phone (no connection used). */
+    private fun local(context: Context, id: String): String? = app(context).downloads.localFile(id)?.let { android.net.Uri.fromFile(it).toString() }
+
     fun movie(context: Context, m: Movie, resumeAt: Double) {
         val client = app(context).library.client ?: return
-        open(context, PlayRequest(client.movieUrl(m), m.cleanName, null,
+        open(context, PlayRequest(local(context, "movie:${m.streamId}") ?: client.movieUrl(m), m.cleanName, null,
             Watching.MovieItem(m.streamId, m.cleanName, m.icon, m.ext), resumeAt, live = false))
     }
 
@@ -47,13 +50,15 @@ object Playback {
     fun episodeRequest(context: Context, s: Series, episodes: List<Episode>, index: Int, resumeAt: Double): PlayRequest? {
         val client = app(context).library.client ?: return null
         val ep = episodes.getOrNull(index) ?: return null
-        return PlayRequest(client.episodeUrl(ep.episodeId, ep.ext), s.cleanName, "S${ep.season} E${ep.episodeNum} • ${ep.cleanTitle}",
+        return PlayRequest(local(context, "episode:${ep.episodeId}") ?: client.episodeUrl(ep.episodeId, ep.ext), s.cleanName, "S${ep.season} E${ep.episodeNum} • ${ep.cleanTitle}",
             Watching.EpisodeItem(s.seriesId, ep.episodeId, ep.season, ep.episodeNum, ep.cleanTitle, s.cleanName, s.cover, ep.ext),
             resumeAt, live = false, episodes = episodes, episodeIndex = index, series = s)
     }
 
-    fun live(context: Context, c: LiveChannel) {
-        val client = app(context).library.client ?: return
-        open(context, PlayRequest(client.liveUrl(c.streamId), c.cleanName, null, Watching.LiveItem(c.streamId, c.cleanName, c.icon), 0.0, live = true))
+    fun live(context: Context, c: LiveChannel) { liveRequest(context, c)?.let { open(context, it) } }
+
+    fun liveRequest(context: Context, c: LiveChannel): PlayRequest? {
+        val client = app(context).library.client ?: return null
+        return PlayRequest(client.liveUrl(c.streamId), c.cleanName, null, Watching.LiveItem(c.streamId, c.cleanName, c.icon), 0.0, live = true)
     }
 }

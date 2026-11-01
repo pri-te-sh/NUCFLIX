@@ -77,8 +77,9 @@ private fun PlayButton(label: String, onClick: () -> Unit) {
 private fun minutes(secs: Double) = "${(secs / 60).toInt().coerceAtLeast(1)} min"
 
 @Composable
-fun MovieDetailScreen(library: Library, movie: Movie, onBack: () -> Unit) {
+fun MovieDetailScreen(library: Library, movie: Movie, open: (Page) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
+    val downloads = (context.applicationContext as com.pritesh.nucflix.phone.NucFlixApp).downloads
     @Suppress("UNUSED_VARIABLE") val rev = library.revision
     var info by remember(movie.streamId) { mutableStateOf<MovieInfo?>(null) }
     LaunchedEffect(movie.streamId) { info = library.client?.movieInfo(movie.streamId) }
@@ -99,7 +100,12 @@ fun MovieDetailScreen(library: Library, movie: Movie, onBack: () -> Unit) {
                     Button(onClick = { Playback.movie(context, movie, 0.0) }, modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = NucColors.SurfaceHigh, contentColor = Color.White)) { Text("Start Over") }
                 } else PlayButton("Play") { Playback.movie(context, movie, 0.0) }
-                MyListButton(fav) { sync?.setFavorite(Kind.MOVIE, movie.streamId, movie.cleanName, movie.icon, movie.ext, movie.categoryId, !fav) }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MyListButton(fav) { sync?.setFavorite(Kind.MOVIE, movie.streamId, movie.cleanName, movie.icon, movie.ext, movie.categoryId, !fav) }
+                    library.line?.let { line ->
+                        DownloadButton(downloads, { movieDownload(line.id, movie) }) { open(Page.Downloads) }
+                    }
+                }
                 info?.plot?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp) }
                 info?.genre?.takeIf { it.isNotBlank() }?.let { Text("Genre: $it", color = NucColors.Muted, fontSize = 13.sp) }
                 info?.cast?.takeIf { it.isNotBlank() }?.let { Text("Cast: $it", color = NucColors.Muted, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
@@ -110,8 +116,9 @@ fun MovieDetailScreen(library: Library, movie: Movie, onBack: () -> Unit) {
 }
 
 @Composable
-fun SeriesDetailScreen(library: Library, series: Series, onBack: () -> Unit) {
+fun SeriesDetailScreen(library: Library, series: Series, open: (Page) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
+    val downloads = (context.applicationContext as com.pritesh.nucflix.phone.NucFlixApp).downloads
     @Suppress("UNUSED_VARIABLE") val rev = library.revision
     var info by remember(series.seriesId) { mutableStateOf<SeriesInfo?>(null) }
     var loading by remember(series.seriesId) { mutableStateOf(true) }
@@ -179,6 +186,7 @@ fun SeriesDetailScreen(library: Library, series: Series, onBack: () -> Unit) {
                     if (sub.isNotEmpty()) Text(sub.joinToString(" · "), color = NucColors.Muted, fontSize = 12.sp)
                 }
                 if (p?.isWatched == true) Icon(Icons.Filled.CheckCircle, "Watched", tint = NucColors.Muted)
+                library.line?.let { line -> DownloadIcon(downloads, { episodeDownload(line.id, series, ep) }) { open(Page.Downloads) } }
             }
         }
     }

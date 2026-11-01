@@ -38,6 +38,12 @@ class XtreamClient(private val line: CloudLine, private val cacheRoot: File) {
     fun movieUrl(streamId: Int, ext: String?) = "$base/movie/$user/$pass/$streamId.${ext?.ifBlank { null } ?: "mp4"}"
     fun episodeUrl(episodeId: String, ext: String?) = "$base/series/$user/$pass/$episodeId.${ext?.ifBlank { null } ?: "mp4"}"
 
+    /** Connections the provider allows at once (user_info.max_connections), or null when it doesn't say. */
+    suspend fun maxConnections(): Int? = withContext(Dispatchers.IO) {
+        runCatching { JSONObject(fetchText(apiUrl(null))).optJSONObject("user_info")?.optString("max_connections")?.toIntOrNull() }
+            .getOrNull()?.takeIf { it > 0 }
+    }
+
     /** When the cached lists were saved (0 = never). */
     fun cachedAt(): Long = File(cacheDir, "get_vod_streams.json").takeIf { it.exists() }?.lastModified() ?: 0
 

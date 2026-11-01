@@ -17,6 +17,8 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         handle(intent)
+        // Picks up downloads that were queued or running when the app last stopped.
+        (application as NucFlixApp).downloads.resumeAll()
         setContent { NucFlixTheme { Root(cloud, (application as NucFlixApp).library) } }
     }
 

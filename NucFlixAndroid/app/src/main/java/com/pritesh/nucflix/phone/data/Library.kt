@@ -65,7 +65,7 @@ data class ContinueItem(val progress: Progress, val nextEpisode: Episode? = null
  * The active profile's library on the active line: the catalog (cached on disk, refreshed in the background),
  * the filters, My List / progress sync and the shared AI data.
  */
-class Library(private val context: Context) {
+class Library(private val context: Context, private val downloads: DownloadManager) {
     enum class Status { IDLE, LOADING, READY, FAILED }
 
     var status by mutableStateOf(Status.IDLE); private set
@@ -89,7 +89,10 @@ class Library(private val context: Context) {
     private val upNext = HashMap<Int, Pair<String, Episode?>>() // seriesId -> (episodeId it follows, next episode)
     private val seriesInfoCache = HashMap<Int, SeriesInfo>()
 
-    private val deviceId by lazy {
+    /** The line this phone streams from right now (downloads wait while it does), set by the player. */
+    var streamingLineId: String? = null
+
+    val deviceId by lazy {
         "android-" + (Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "device")
     }
 
@@ -103,7 +106,12 @@ class Library(private val context: Context) {
             sessionKey = newSession
             sync?.stop()
             smart?.stop()
-            sync = ProfileSync(uid, profile.id, line.id, deviceId, ProfileSync.deviceName()) { revision++; refreshUpNext() }.also { it.start() }
+            sync = ProfileSync(uid, profile.id, line.id, deviceId, ProfileSync.deviceName()) {
+                revision++
+                refreshUpNext()
+                sync?.let { downloads.removeWatched(it.progress) }
+            }.also { it.start() }
+            downloads.watchPresence(uid)
             smart = SmartData(uid, line.id) { scheduleRefilter(1500) }.also { it.start(watchKids = profile.kids) }
             upNext.clear()
         }
@@ -114,6 +122,7 @@ class Library(private val context: Context) {
             raw = null
             catalog = FilteredCatalog.EMPTY
             load()
+            scope.launch { client?.maxConnections()?.let { downloads.maxConnections[line.id] = it } }
         } else if (newFilter != filterKey) {
             scheduleRefilter(0)
         }
@@ -210,6 +219,9 @@ class Library(private val context: Context) {
             revision++
         }
     }
+
+    /** A category's AI tag (language, genre...), for smart search. */
+    fun tag(kind: Kind, categoryId: String): CategoryTag? = smart?.tag(kind, categoryId)
 
     suspend fun seriesInfo(seriesId: Int): SeriesInfo? =
         seriesInfoCache[seriesId] ?: client?.seriesInfo(seriesId)?.also { seriesInfoCache[seriesId] = it }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
@@ -88,6 +89,7 @@ sealed interface Page {
     data object Account : Page
     data object Lines : Page
     data object PairTv : Page
+    data object Downloads : Page
 }
 
 private enum class Tab(val label: String, val icon: ImageVector) {
@@ -104,11 +106,12 @@ fun MainScreen(cloud: CloudAccount, library: Library) {
     BackHandler(pages.isEmpty() && tab != Tab.HOME) { tab = Tab.HOME }
 
     when (val page = pages.lastOrNull()) {
-        is Page.MovieDetail -> { MovieDetailScreen(library, page.movie) { pages.removeAt(pages.lastIndex) }; return }
-        is Page.SeriesDetail -> { SeriesDetailScreen(library, page.series) { pages.removeAt(pages.lastIndex) }; return }
+        is Page.MovieDetail -> { MovieDetailScreen(library, page.movie, open) { pages.removeAt(pages.lastIndex) }; return }
+        is Page.SeriesDetail -> { SeriesDetailScreen(library, page.series, open) { pages.removeAt(pages.lastIndex) }; return }
         Page.Account -> { AccountScreen(cloud, library, open) { pages.removeAt(pages.lastIndex) }; return }
         Page.Lines -> { LinesScreen(cloud) { pages.removeAt(pages.lastIndex) }; return }
         Page.PairTv -> { PairTvScreen(cloud) { pages.removeAt(pages.lastIndex) }; return }
+        Page.Downloads -> { DownloadsScreen(library) { pages.removeAt(pages.lastIndex) }; return }
         null -> Unit
     }
     val profile = cloud.selectedProfile ?: return
@@ -117,6 +120,7 @@ fun MainScreen(cloud: CloudAccount, library: Library) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Wordmark(size = 24)
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = { open(Page.Downloads) }) { Icon(Icons.Filled.Download, "Downloads", tint = Color.White) }
             ProfileAvatar(profile, 32.dp, Modifier.clickable { open(Page.Account) })
         }
         Box(Modifier.weight(1f)) {
@@ -372,13 +376,33 @@ private fun SearchTab(library: Library, open: (Page) -> Unit) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query, library.catalog) { library.catalog.search(query) }
+    // Requests like "funny hindi movies from the 2010s" also get AI-read filters (Gemma 4), shown first.
+    var smart by remember { mutableStateOf<Pair<String, List<Any>>?>(null) }
+    androidx.compose.runtime.LaunchedEffect(query) {
+        smart = null
+        if (query.trim().split(Regex("\\s+")).size < 3) return@LaunchedEffect
+        kotlinx.coroutines.delay(700)
+        val f = com.pritesh.nucflix.phone.data.SmartAI.searchFilters(query) ?: return@LaunchedEffect
+        smart = f.describe() to com.pritesh.nucflix.phone.data.SmartAI.applyFilters(f, library.catalog, library::tag)
+    }
     Column {
         OutlinedTextField(query, { query = it }, placeholder = { Text("Search shows, movies, channels") }, singleLine = true,
             leadingIcon = { Icon(Icons.Filled.Search, null) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
         if (query.isBlank()) { Message("Find a title or channel by name."); return }
-        if (results.movies.isEmpty() && results.series.isEmpty() && results.live.isEmpty()) { Message("No results for \"$query\"."); return }
+        val smartHits = smart?.second.orEmpty()
+        if (results.movies.isEmpty() && results.series.isEmpty() && results.live.isEmpty() && smartHits.isEmpty()) { Message("No results for \"$query\"."); return }
         LazyVerticalGrid(GridCells.Adaptive(108.dp), contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (smartHits.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) { Text("\u2726 ${smart?.first}", fontWeight = FontWeight.Bold, color = NucColors.Red) }
+                items(smartHits, key = { h -> when (h) { is Movie -> "am${h.streamId}"; is Series -> "as${h.seriesId}"; is LiveChannel -> "al${h.streamId}"; else -> h.hashCode() } }) { h ->
+                    when (h) {
+                        is Movie -> GridPoster(h.icon, h.cleanName) { open(Page.MovieDetail(h)) }
+                        is Series -> GridPoster(h.cover, h.cleanName) { open(Page.SeriesDetail(h)) }
+                        is LiveChannel -> ChannelTile(h.icon, h.cleanName) { Playback.live(context, h) }
+                    }
+                }
+            }
             if (results.live.isNotEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Column {

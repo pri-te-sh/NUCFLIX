@@ -9,6 +9,7 @@ import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.MemoryCacheSettings
 import com.google.firebase.functions.FirebaseFunctions
 import com.pritesh.nucflix.phone.data.CloudAccount
+import com.pritesh.nucflix.phone.data.DownloadManager
 import com.pritesh.nucflix.phone.data.Library
 import com.pritesh.nucflix.phone.player.PlayRequest
 
@@ -16,6 +17,8 @@ class NucFlixApp : Application() {
     lateinit var cloud: CloudAccount
         private set
     lateinit var library: Library
+        private set
+    lateinit var downloads: DownloadManager
         private set
     /** What the player screen should play next (handed over by the screen that started it). */
     var playRequest: PlayRequest? = null
@@ -42,6 +45,10 @@ class NucFlixApp : Application() {
             FirebaseFunctions.getInstance("us-central1").useEmulator("10.0.2.2", 5001)
         }
         cloud = CloudAccount(this)
-        library = Library(this)
+        downloads = DownloadManager(this)
+        library = Library(this, downloads)
+        downloads.lines = { cloud.lines }
+        downloads.deviceId = library.deviceId
+        downloads.streamingHere = { library.streamingLineId }
     }
 }
