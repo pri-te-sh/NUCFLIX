@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,11 +94,18 @@ fun ChannelTile(url: String?, name: String, width: Dp = 140.dp, onClick: () -> U
 
 /** A titled horizontal row. */
 @Composable
-fun <T> MediaRow(title: String, items: List<T>, key: (T) -> Any, content: @Composable (T) -> Unit) {
+fun <T> MediaRow(title: String, items: List<T>, key: (T) -> Any, action: String? = null, onAction: () -> Unit = {}, content: @Composable (T) -> Unit) {
     if (items.isEmpty()) return
     Column(Modifier.padding(top = 18.dp)) {
-        Text(title, Modifier.padding(start = 16.dp, bottom = 8.dp), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (action != null) Text(action, Modifier.clickable(onClick = onAction).padding(start = 12.dp), fontSize = 13.sp, color = NucColors.Muted)
+        }
+        // A new first item (e.g. a title just watched) is shown, not left just off the start of the row.
+        val state = rememberLazyListState()
+        val first = key(items.first())
+        LaunchedEffect(first) { if (state.firstVisibleItemIndex <= 1) state.scrollToItem(0) }
+        LazyRow(state = state, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(items, key = key) { content(it) }
         }
     }

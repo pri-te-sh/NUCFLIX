@@ -38,11 +38,21 @@ class XtreamClient(private val line: CloudLine, private val cacheRoot: File) {
     fun movieUrl(streamId: Int, ext: String?) = "$base/movie/$user/$pass/$streamId.${ext?.ifBlank { null } ?: "mp4"}"
     fun episodeUrl(episodeId: String, ext: String?) = "$base/series/$user/$pass/$episodeId.${ext?.ifBlank { null } ?: "mp4"}"
 
-    /** Connections the provider allows at once (user_info.max_connections), or null when it doesn't say. */
-    suspend fun maxConnections(): Int? = withContext(Dispatchers.IO) {
-        runCatching { JSONObject(fetchText(apiUrl(null))).optJSONObject("user_info")?.optString("max_connections")?.toIntOrNull() }
-            .getOrNull()?.takeIf { it > 0 }
+    /** The subscription as the provider reports it (user_info). */
+    data class AccountInfo(val username: String, val status: String, val expiresAt: Long?, val activeConnections: Int?, val maxConnections: Int?,
+                           val trial: Boolean, val server: String)
+
+    suspend fun accountInfo(): AccountInfo? = withContext(Dispatchers.IO) {
+        runCatching {
+            val u = JSONObject(fetchText(apiUrl(null))).optJSONObject("user_info") ?: return@runCatching null
+            fun num(k: String) = u.optString(k).toDoubleOrNull()?.toLong()
+            AccountInfo(u.optString("username"), u.optString("status").ifEmpty { "Active" }, num("exp_date")?.takeIf { it > 0 },
+                num("active_cons")?.toInt(), num("max_connections")?.toInt()?.takeIf { it > 0 }, u.optString("is_trial") == "1", base)
+        }.getOrNull()
     }
+
+    /** Connections the provider allows at once (user_info.max_connections), or null when it doesn't say. */
+    suspend fun maxConnections(): Int? = accountInfo()?.maxConnections
 
     /** When the cached lists were saved (0 = never). */
     fun cachedAt(): Long = File(cacheDir, "get_vod_streams.json").takeIf { it.exists() }?.lastModified() ?: 0
@@ -136,6 +146,19 @@ class XtreamClient(private val line: CloudLine, private val cacheRoot: File) {
                 info.optString("genre"), info.optString("releasedate", info.optString("release_date")),
                 info.optString("duration_secs").toIntOrNull() ?: 0,
                 (backdrops as? JSONArray)?.optString(0) ?: (backdrops as? String).orEmpty())
+        }.getOrNull()
+    }
+
+    /** A channel's upcoming programmes (get_short_epg), or null when the request failed. */
+    suspend fun shortEpg(streamId: Int, limit: Int): List<Programme>? = withContext(Dispatchers.IO) {
+        runCatching {
+            val arr = JSONObject(fetchText(apiUrl("get_short_epg", mapOf("stream_id" to streamId.toString(), "limit" to limit.toString()))))
+                .optJSONArray("epg_listings") ?: JSONArray()
+            (0 until arr.length()).mapNotNull { i ->
+                val e = arr.optJSONObject(i) ?: return@mapNotNull null
+                Programme(Programme.decode(e.optString("title")).ifBlank { "Programme" }, Programme.decode(e.optString("description")).trim(),
+                    e.optString("start_timestamp").toLongOrNull() ?: 0, e.optString("stop_timestamp").toLongOrNull() ?: 0)
+            }.sortedBy { it.start }
         }.getOrNull()
     }
 

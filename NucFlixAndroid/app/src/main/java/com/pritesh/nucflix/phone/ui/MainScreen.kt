@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
@@ -133,7 +134,7 @@ fun MainScreen(cloud: CloudAccount, library: Library) {
                     }
                 }
                 else -> when (tab) {
-                    Tab.HOME -> HomeTab(library, open)
+                    Tab.HOME -> HomeTab(library, open) { tab = Tab.LIVE }
                     Tab.SHOWS -> BrowseTab(library, Kind.SERIES, open)
                     Tab.MOVIES -> BrowseTab(library, Kind.MOVIE, open)
                     Tab.LIVE -> LiveTab(library)
@@ -161,93 +162,8 @@ fun Message(text: String, action: String? = null, onAction: () -> Unit = {}) {
     }
 }
 
-// ---------------------------------------------------------------- Home
-
-@Composable
-private fun HomeTab(library: Library, open: (Page) -> Unit) {
-    val context = LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    @Suppress("UNUSED_VARIABLE") val rev = library.revision // recompose when My List / progress change
-    val cat = library.catalog
-    val sync = library.sync
-    val cw = library.continueWatching()
-    val rows = remember(cat) { library.homeRows() }
-    // The featured title: the newest movie with artwork (stable across catalog refreshes, unlike a random pick).
-    val hero = remember(cat) { cat.movies.sortedByDescending { it.added }.let { l -> l.firstOrNull { it.icon.isNotBlank() } ?: l.firstOrNull() } }
-    var removing by remember { mutableStateOf<ContinueItem?>(null) }
-    val myList = sync?.favorites.orEmpty().mapNotNull { f ->
-        when (f.kind) {
-            Kind.MOVIE -> cat.movieById[f.id]?.let { Triple("m${f.id}", it.icon, it.cleanName) to { open(Page.MovieDetail(it)) } }
-            Kind.SERIES -> cat.seriesById[f.id]?.let { Triple("s${f.id}", it.cover, it.cleanName) to { open(Page.SeriesDetail(it)) } }
-            Kind.LIVE -> null
-        }
-    }
-    val favChannels = sync?.favorites.orEmpty().filter { it.kind == Kind.LIVE }.mapNotNull { cat.liveById[it.id] }
-
-    if (cat.movies.isEmpty() && cat.series.isEmpty() && cat.live.isEmpty()) {
-        Message(if (cat.kidsPending.isNotEmpty()) "Getting things ready: checking titles so only kid-friendly ones show. The first time takes a few minutes."
-                else "Nothing here yet. Your provider returned no titles.")
-        return
-    }
-    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-        hero?.let { h ->
-            item {
-                Box(Modifier.fillMaxWidth().aspectRatio(0.8f)) {
-                    Artwork(h.icon, h.cleanName, Modifier.fillMaxSize())
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), startY = 300f)))
-                    Column(Modifier.align(Alignment.BottomCenter).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(h.cleanName, fontSize = 26.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = { Playback.movie(context, h, library.movieProgress(h.streamId)?.resumeAt ?: 0.0) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
-                                Icon(Icons.Filled.PlayArrow, null); Text("Play", fontWeight = FontWeight.SemiBold)
-                            }
-                            OutlinedButton(onClick = { open(Page.MovieDetail(h)) }) { Text("More Info", color = Color.White) }
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            MediaRow("Continue Watching", cw, key = { it.key }) { item ->
-                val p = item.progress
-                val next = item.nextEpisode
-                val caption = when {
-                    next != null -> "Next: S${next.season} E${next.episodeNum}"
-                    p.subtitle != null -> p.subtitle
-                    else -> "${((p.duration - p.position) / 60).toInt().coerceAtLeast(1)} min left"
-                }
-                ProgressCard(p.artwork, p.title, caption, if (next != null) 0f else (p.position / p.duration).toFloat(), onLongClick = { removing = item }) {
-                    scope.launch { resume(context, library, item, open) }
-                }
-            }
-        }
-        item {
-            MediaRow("My List", myList, key = { it.first.first }) { (t, go) -> Poster(t.second, t.third, onClick = go) }
-        }
-        item {
-            MediaRow("Live TV", favChannels.ifEmpty { cat.live.take(15) }, key = { it.streamId }) { c -> ChannelTile(c.icon, c.cleanName) { Playback.live(context, c) } }
-        }
-        rows.forEach { row ->
-            item {
-                if (row.movies.isNotEmpty()) MediaRow(row.title, row.movies, key = { it.streamId }) { m -> Poster(m.icon, m.cleanName) { open(Page.MovieDetail(m)) } }
-                else MediaRow(row.title, row.series, key = { it.seriesId }) { s -> Poster(s.cover, s.cleanName) { open(Page.SeriesDetail(s)) } }
-            }
-        }
-    }
-    removing?.let { item ->
-        AlertDialog(
-            onDismissRequest = { removing = null },
-            title = { Text("Remove ${item.progress.title} from Continue Watching?") },
-            text = { Text(if (item.progress.kind == "episode") "It goes from every device, and this show's episode progress is cleared." else "It goes from every device.") },
-            confirmButton = { TextButton(onClick = { library.removeFromContinueWatching(item); removing = null }) { Text("Remove", color = NucColors.Red) } },
-            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel", color = Color.White) } }
-        )
-    }
-}
-
 /** Plays a Continue Watching card: a movie or episode from where it stopped, or the next episode. */
-private suspend fun resume(context: android.content.Context, library: Library, item: ContinueItem, open: (Page) -> Unit) {
+internal suspend fun resume(context: android.content.Context, library: Library, item: ContinueItem, open: (Page) -> Unit) {
     val p = item.progress
     val cat = library.catalog
     if (p.kind == "movie") {
@@ -334,6 +250,7 @@ private fun LiveTab(library: Library) {
     val sync = library.sync
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
+    var guideFor by remember { mutableStateOf<LiveChannel?>(null) }
     val favorites = sync?.favorites.orEmpty().filter { it.kind == Kind.LIVE }.mapNotNull { cat.liveById[it.id] }
     val channels: List<LiveChannel> = when (selected) {
         null -> favorites.ifEmpty { cat.live.take(200) }
@@ -351,13 +268,16 @@ private fun LiveTab(library: Library) {
         LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(channels, key = { it.streamId }) { c ->
                 val fav = sync?.isFavorite(Kind.LIVE, c.streamId) == true
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(NucColors.Surface).clickable { Playback.live(context, c) }.padding(8.dp),
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(NucColors.Surface)
+                    .clickable { Playback.live(context, c, library.epg.now(c.streamId)?.title) }.padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Artwork(c.icon, c.cleanName, Modifier.width(96.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)), fit = true)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(c.cleanName, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        NowOn(library.epg, c.streamId)
                         if (c.badges.isNotEmpty()) Text(c.badges.joinToString(" · "), fontSize = 12.sp, color = NucColors.Muted)
                     }
+                    IconButton(onClick = { guideFor = c }) { Icon(Icons.Filled.CalendarMonth, "TV guide", tint = NucColors.Muted) }
                     IconButton(onClick = { sync?.setFavorite(Kind.LIVE, c.streamId, c.cleanName, c.icon, null, c.categoryId, !fav) }) {
                         Icon(if (fav) Icons.Filled.Star else Icons.Filled.StarBorder, if (fav) "Remove favourite" else "Add favourite",
                             tint = if (fav) Color(0xFFF5C518) else NucColors.Muted)
@@ -367,6 +287,7 @@ private fun LiveTab(library: Library) {
         }
     }
     if (picking) CategoryPicker(cat.liveCategories, onDismiss = { picking = false }) { selected = it; picking = false }
+    guideFor?.let { c -> GuideSheet(library.epg, c.cleanName, c.streamId) { guideFor = null } }
 }
 
 // ---------------------------------------------------------------- Search

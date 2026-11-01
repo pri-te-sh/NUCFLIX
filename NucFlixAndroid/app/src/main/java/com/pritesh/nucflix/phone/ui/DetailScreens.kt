@@ -82,7 +82,10 @@ fun MovieDetailScreen(library: Library, movie: Movie, open: (Page) -> Unit, onBa
     val downloads = (context.applicationContext as com.pritesh.nucflix.phone.NucFlixApp).downloads
     @Suppress("UNUSED_VARIABLE") val rev = library.revision
     var info by remember(movie.streamId) { mutableStateOf<MovieInfo?>(null) }
-    LaunchedEffect(movie.streamId) { info = library.client?.movieInfo(movie.streamId) }
+    LaunchedEffect(movie.streamId) {
+        info = library.client?.movieInfo(movie.streamId)
+        library.recordDetail(movie, info?.genre)
+    }
     val progress = library.movieProgress(movie.streamId)
     val resume = progress?.resumeAt ?: 0.0
     val sync = library.sync
@@ -103,7 +106,7 @@ fun MovieDetailScreen(library: Library, movie: Movie, open: (Page) -> Unit, onBa
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     MyListButton(fav) { sync?.setFavorite(Kind.MOVIE, movie.streamId, movie.cleanName, movie.icon, movie.ext, movie.categoryId, !fav) }
                     library.line?.let { line ->
-                        DownloadButton(downloads, { movieDownload(line.id, movie) }) { open(Page.Downloads) }
+                        DownloadButton(downloads, { movieDownload(line.id, movie) }, onStart = { library.recordDownload(movie) }) { open(Page.Downloads) }
                     }
                 }
                 info?.plot?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp) }
@@ -123,7 +126,10 @@ fun SeriesDetailScreen(library: Library, series: Series, open: (Page) -> Unit, o
     var info by remember(series.seriesId) { mutableStateOf<SeriesInfo?>(null) }
     var loading by remember(series.seriesId) { mutableStateOf(true) }
     var season by remember(series.seriesId) { mutableStateOf<Int?>(null) }
-    LaunchedEffect(series.seriesId) { info = library.seriesInfo(series.seriesId); loading = false }
+    LaunchedEffect(series.seriesId) {
+        library.recordDetail(series)
+        info = library.seriesInfo(series.seriesId); loading = false
+    }
     val sync = library.sync
     val fav = sync?.isFavorite(Kind.SERIES, series.seriesId) == true
     val progress = library.episodeProgress(series.seriesId)
@@ -186,7 +192,7 @@ fun SeriesDetailScreen(library: Library, series: Series, open: (Page) -> Unit, o
                     if (sub.isNotEmpty()) Text(sub.joinToString(" · "), color = NucColors.Muted, fontSize = 12.sp)
                 }
                 if (p?.isWatched == true) Icon(Icons.Filled.CheckCircle, "Watched", tint = NucColors.Muted)
-                library.line?.let { line -> DownloadIcon(downloads, { episodeDownload(line.id, series, ep) }) { open(Page.Downloads) } }
+                library.line?.let { line -> DownloadIcon(downloads, { episodeDownload(line.id, series, ep) }, onStart = { library.recordDownload(series) }) { open(Page.Downloads) } }
             }
         }
     }

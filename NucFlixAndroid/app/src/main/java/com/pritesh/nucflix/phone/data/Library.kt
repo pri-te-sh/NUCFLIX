@@ -70,6 +70,8 @@ class Library(private val context: Context, private val downloads: DownloadManag
 
     var status by mutableStateOf(Status.IDLE); private set
     var error by mutableStateOf<String?>(null); private set
+    /** A forced reload (pull to refresh) is running over the shown catalog. */
+    var refreshing by mutableStateOf(false); private set
     var catalog by mutableStateOf(FilteredCatalog.EMPTY); private set
     /** Bumped whenever synced data (My List, progress) changes: screens read it to recompose. */
     var revision by mutableIntStateOf(0); private set
@@ -88,6 +90,16 @@ class Library(private val context: Context, private val downloads: DownloadManag
     private var loadJob: Job? = null
     private val upNext = HashMap<Int, Pair<String, Episode?>>() // seriesId -> (episodeId it follows, next episode)
     private val seriesInfoCache = HashMap<Int, SeriesInfo>()
+
+    /** Home's hero picks and personal rows (null until the catalog and the synced history are in). */
+    var feed by mutableStateOf<HomeFeed?>(null); private set
+    private val taste = TasteStore(context)
+    private var feedJob: Job? = null
+    private var feedSeed = 0
+    private var feedHasHistory = false
+
+    /** Live channel guides for the active line. */
+    val epg = Epg { client }
 
     /** The line this phone streams from right now (downloads wait while it does), set by the player. */
     var streamingLineId: String? = null
@@ -109,16 +121,20 @@ class Library(private val context: Context, private val downloads: DownloadManag
             sync = ProfileSync(uid, profile.id, line.id, deviceId, ProfileSync.deviceName()) {
                 revision++
                 refreshUpNext()
+                // Once the history has arrived the feed can be personal (later changes wait for the next refresh).
+                if (!feedHasHistory && sync?.loaded == true) refreshFeed()
                 sync?.let { downloads.removeWatched(it.progress) }
             }.also { it.start() }
             downloads.watchPresence(uid)
             smart = SmartData(uid, line.id) { scheduleRefilter(1500) }.also { it.start(watchKids = profile.kids) }
             upNext.clear()
+            feed = null; feedHasHistory = false
         }
         if (newLine != lineKey) {
             lineKey = newLine
             this.line = line
             client = XtreamClient(line, context.cacheDir)
+            epg.clear()
             raw = null
             catalog = FilteredCatalog.EMPTY
             load()
@@ -149,7 +165,8 @@ class Library(private val context: Context, private val downloads: DownloadManag
             }
             if (raw == null) status = Status.LOADING
             if (force || raw == null || System.currentTimeMillis() - cachedAt > REFRESH_AFTER) {
-                runCatching { c.catalog(useCache = false) }
+                refreshing = force && raw != null
+                runCatching { c.catalog(useCache = false) }.also { refreshing = false }
                     .onSuccess { raw = it; refilter(); status = Status.READY }
                     .onFailure { if (raw == null) { error = "Couldn't load your provider's catalog. Check your connection and the line."; status = Status.FAILED } }
             }
@@ -168,6 +185,7 @@ class Library(private val context: Context, private val downloads: DownloadManag
         catalog = withContext(Dispatchers.Default) { CatalogFilter.apply(r, p, s) }
         revision++
         refreshUpNext()
+        refreshFeed()
         // Fill in missing AI data in the background (each title / category only once per household).
         if (s != null) scope.launch {
             s.fillTags(r.liveCategories.map { Kind.LIVE to it } + r.movieCategories.map { Kind.MOVIE to it } + r.seriesCategories.map { Kind.SERIES to it })
@@ -240,24 +258,39 @@ class Library(private val context: Context, private val downloads: DownloadManag
         s.deleteProgress(keys)
     }
 
-    data class Row(val title: String, val movies: List<Movie> = emptyList(), val series: List<Series> = emptyList())
+    // ---------------------------------------------------------------- personal Home
 
-    /** Home rows after Continue Watching and My List. */
-    fun homeRows(): List<Row> {
+    /** Rebuilds Home's picks; [reshuffle] varies them (pull to refresh, or back after a while). */
+    fun refreshFeed(reshuffle: Boolean = false) {
         val cat = catalog
-        val rows = ArrayList<Row>()
-        val newest = cat.movies.sortedByDescending { it.added }.take(30)
-        if (newest.isNotEmpty()) rows += Row("New on NucFlix", movies = newest)
-        val shows = cat.series.sortedByDescending { it.lastModified }.take(30)
-        if (shows.isNotEmpty()) rows += Row("Popular Shows", series = shows)
-        val top = cat.movies.filter { (it.rating.toDoubleOrNull() ?: 0.0) >= 7 }.sortedByDescending { it.added }.take(30)
-        if (top.size >= 6) rows += Row("Critically Acclaimed", movies = top)
-        // A few of the biggest movie and show categories.
-        cat.movieCategories.map { it to (cat.moviesByCategory[it.id]?.size ?: 0) }.filter { it.second >= 10 }.sortedByDescending { it.second }
-            .take(3).forEach { (c, _) -> rows += Row(c.label, movies = cat.moviesByCategory[c.id].orEmpty().sortedByDescending { it.added }.take(30)) }
-        cat.seriesCategories.map { it to (cat.seriesByCategory[it.id]?.size ?: 0) }.filter { it.second >= 10 }.sortedByDescending { it.second }
-            .take(2).forEach { (c, _) -> rows += Row(c.label, series = cat.seriesByCategory[c.id].orEmpty().take(30)) }
-        return rows
+        val p = profile ?: return
+        if (cat.movies.isEmpty() && cat.series.isEmpty()) return
+        if (reshuffle) feedSeed++
+        val s = sync
+        val progress = s?.progress.orEmpty()
+        val favorites = s?.favorites.orEmpty()
+        if (s?.loaded == true) feedHasHistory = true
+        val seed = feedSeed
+        feedJob?.cancel()
+        feedJob = scope.launch {
+            val built = withContext(Dispatchers.Default) {
+                Recommender.build(Recommender.events(taste.load(p.id), progress, favorites, cat), cat, progress, seed)
+            }
+            if (catalog === cat) feed = built
+        }
+    }
+
+    /** A detail page was opened ([genre] from the provider's info, when known): a light taste signal. */
+    fun recordDetail(movie: Movie, genre: String? = null) = recordTaste(TasteEvent.DETAIL, Kind.MOVIE, movie.streamId, movie.name, movie.categoryId, genre)
+    fun recordDetail(series: Series) = recordTaste(TasteEvent.DETAIL, Kind.SERIES, series.seriesId, series.name, series.categoryId, series.genre)
+    fun recordDownload(movie: Movie) = recordTaste(TasteEvent.DOWNLOAD, Kind.MOVIE, movie.streamId, movie.name, movie.categoryId, null)
+    fun recordDownload(series: Series) = recordTaste(TasteEvent.DOWNLOAD, Kind.SERIES, series.seriesId, series.name, series.categoryId, series.genre)
+
+    private fun recordTaste(kind: String, content: Kind, id: Int, title: String, categoryId: String, genre: String?) {
+        val p = profile ?: return
+        scope.launch(Dispatchers.IO) {
+            taste.add(p.id, TasteEvent(kind, content, id, title, categoryId, Recommender.genres(genre), System.currentTimeMillis()))
+        }
     }
 
     companion object {

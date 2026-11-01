@@ -55,10 +55,11 @@ object Playback {
             resumeAt, live = false, episodes = episodes, episodeIndex = index, series = s)
     }
 
-    fun live(context: Context, c: LiveChannel) { liveRequest(context, c)?.let { open(context, it) } }
+    /** [nowOn]: the programme on now (from the guide), shown under the channel name. */
+    fun live(context: Context, c: LiveChannel, nowOn: String? = null) { liveRequest(context, c, nowOn)?.let { open(context, it) } }
 
-    fun liveRequest(context: Context, c: LiveChannel): PlayRequest? {
+    fun liveRequest(context: Context, c: LiveChannel, nowOn: String? = null): PlayRequest? {
         val client = app(context).library.client ?: return null
-        return PlayRequest(client.liveUrl(c.streamId), c.cleanName, null, Watching.LiveItem(c.streamId, c.cleanName, c.icon), 0.0, live = true)
+        return PlayRequest(client.liveUrl(c.streamId), c.cleanName, nowOn, Watching.LiveItem(c.streamId, c.cleanName, c.icon), 0.0, live = true)
     }
 }

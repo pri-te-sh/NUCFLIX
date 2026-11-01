@@ -76,10 +76,10 @@ fun rememberDownloader(downloads: DownloadManager): (DownloadItem) -> Unit {
 
 /** The download state of one title, as an icon button (download / waiting / progress / done). */
 @Composable
-fun DownloadIcon(downloads: DownloadManager, item: () -> DownloadItem, onOpenDownloads: () -> Unit) {
+fun DownloadIcon(downloads: DownloadManager, item: () -> DownloadItem, onStart: () -> Unit = {}, onOpenDownloads: () -> Unit) {
     val start = rememberDownloader(downloads)
     val d = downloads.items.firstOrNull { it.id == item().id }
-    IconButton(onClick = { if (d == null) start(item()) else onOpenDownloads() }) {
+    IconButton(onClick = { if (d == null) { onStart(); start(item()) } else onOpenDownloads() }) {
         when (d?.state) {
             null -> Icon(Icons.Filled.Download, "Download", tint = Color.White)
             DownloadItem.State.DONE -> Icon(Icons.Filled.DownloadDone, "Downloaded", tint = NucColors.Green)
@@ -92,10 +92,10 @@ fun DownloadIcon(downloads: DownloadManager, item: () -> DownloadItem, onOpenDow
 
 /** A labelled download button for a movie page. */
 @Composable
-fun DownloadButton(downloads: DownloadManager, item: () -> DownloadItem, onOpenDownloads: () -> Unit) {
+fun DownloadButton(downloads: DownloadManager, item: () -> DownloadItem, onStart: () -> Unit = {}, onOpenDownloads: () -> Unit) {
     val start = rememberDownloader(downloads)
     val d = downloads.items.firstOrNull { it.id == item().id }
-    OutlinedButton(onClick = { if (d == null) start(item()) else onOpenDownloads() }) {
+    OutlinedButton(onClick = { if (d == null) { onStart(); start(item()) } else onOpenDownloads() }) {
         val (icon, label) = when (d?.state) {
             null -> Icons.Filled.Download to "Download"
             DownloadItem.State.DONE -> Icons.Filled.DownloadDone to "Downloaded"

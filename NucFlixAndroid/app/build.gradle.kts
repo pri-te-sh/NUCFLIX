@@ -28,7 +28,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.4.0"
         firebase.forEach { (key, value) -> buildConfigField("String", "FIREBASE_$key", "\"$value\"") }
         // -Pnucflix.emulator=true points a build at the local Firebase emulators (testing only).
         buildConfigField("boolean", "FIREBASE_EMULATOR", (project.findProperty("nucflix.emulator") as String?).toBoolean().toString())
@@ -85,6 +85,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
+    implementation("androidx.media3:media3-session:1.10.1")
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
 
