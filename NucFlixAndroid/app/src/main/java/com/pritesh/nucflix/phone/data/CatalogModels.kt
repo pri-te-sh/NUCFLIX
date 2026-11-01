@@ -29,14 +29,15 @@ data class Episode(
     val ext: String, val image: String, val plot: String, val durationSecs: Int
 )
 
+/** [tmdbId]: the provider's TMDB id for the title, when it lists one (X-Ray uses it). */
 data class SeriesInfo(val plot: String, val cast: String, val genre: String, val releaseDate: String, val cover: String,
-                      val backdrop: String, val episodesBySeason: Map<Int, List<Episode>>) {
+                      val backdrop: String, val episodesBySeason: Map<Int, List<Episode>>, val tmdbId: String = "") {
     val seasons: List<Int> get() = episodesBySeason.keys.sorted()
     val allEpisodes: List<Episode> get() = seasons.flatMap { episodesBySeason[it].orEmpty() }
 }
 
 data class MovieInfo(val plot: String, val cast: String, val director: String, val genre: String, val releaseDate: String,
-                     val durationSecs: Int, val backdrop: String)
+                     val durationSecs: Int, val backdrop: String, val tmdbId: String = "")
 
 /** Everything the provider lists for a line (before the adult / kids filters). */
 data class RawCatalog(

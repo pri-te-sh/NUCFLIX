@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.PersonSearch
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ScreenRotation
@@ -106,6 +107,8 @@ import com.pritesh.nucflix.phone.ui.GuideSheet
 import com.pritesh.nucflix.phone.ui.NucColors
 import com.pritesh.nucflix.phone.ui.NucFlixTheme
 import com.pritesh.nucflix.TsRebaseDataSource
+import com.pritesh.nucflix.phone.data.SmartAI
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -137,6 +140,11 @@ class PlayerActivity : ComponentActivity() {
     private var portrait by mutableStateOf(false)
     private var brightness by mutableFloatStateOf(0.5f)
     private var showGuide by mutableStateOf(false)
+    /** The X-Ray panel while it's open, and whether it paused a playing title (closing it plays on). */
+    private var xray by mutableStateOf<XRayOpen?>(null)
+    private var xrayResume = false
+    /** X-Ray answers for this player, per title and 10-second stretch. */
+    private val xrayCache = mutableMapOf<String, SmartAI.XRayScene>()
     private var session: MediaSession? = null
     private var savedPosition = 0.0
     private var applyingPrefs = false
@@ -483,6 +491,7 @@ class PlayerActivity : ComponentActivity() {
             if (showGuide) (req?.watching as? Watching.LiveItem)?.let { live ->
                 GuideSheet(app.library.epg, req.title, live.streamId) { showGuide = false }
             }
+            xray?.let { open -> if (!inPip) XRaySheet(open.heading, open.subheading, open.load) { closeXray() } }
         }
     }
 
@@ -510,6 +519,7 @@ class PlayerActivity : ComponentActivity() {
                         tint = if (fav) Color(0xFFF5C518) else Color.White)
                 }
             }
+            if (live == null) IconButton(onClick = { openXray(req) }) { Icon(Icons.Filled.PersonSearch, "X-Ray: who's on screen", tint = Color.White) }
             IconButton(onClick = { zoomed = !zoomed }) { Icon(Icons.Filled.AspectRatio, if (zoomed) "Fit to screen" else "Fill screen", tint = if (zoomed) NucColors.Red else Color.White) }
             IconButton(onClick = { rotate() }) { Icon(Icons.Filled.ScreenRotation, "Rotate", tint = Color.White) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) IconButton(onClick = { enterPip() }) { Icon(Icons.Filled.PictureInPictureAlt, "Picture in picture", tint = Color.White) }
@@ -525,6 +535,54 @@ class PlayerActivity : ComponentActivity() {
         } else Row(Modifier.fillMaxWidth().safeDrawingPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             back(); title(Modifier.weight(1f)); buttons()
         }
+    }
+
+    // ---------------------------------------------------------------- X-Ray
+
+    class XRayOpen(val heading: String, val subheading: String, val load: suspend () -> SmartAI.XRayScene?)
+
+    /** Grabs the picture on screen (before pausing), pauses, and opens X-Ray for that moment of a movie or episode. */
+    private fun openXray(req: PlayRequest) {
+        if (req.live || xray != null) return
+        val position = player.currentPosition / 1000.0
+        val frame = scope.async { PlayerAI.grab(playerView, 768) }
+        xrayResume = player.isPlaying
+        player.pause()
+        playerView?.hideController()
+        val s = position.toInt()
+        val at = "at " + if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+        val key = "${req.watching}:${s / 10}"
+        xray = XRayOpen(req.title, req.subtitle?.let { "$it • $at" } ?: at) {
+            xrayCache[key] ?: SmartAI.xrayScene(xrayInfo(req), position, frame.await())?.also { xrayCache[key] = it }
+        }
+    }
+
+    private fun closeXray() {
+        xray = null
+        if (xrayResume) player.play()
+        xrayResume = false
+    }
+
+    /** What the xray function needs to find the title on TMDB: kind, name, year, the provider's TMDB id, episode numbers. */
+    private suspend fun xrayInfo(req: PlayRequest): Map<String, Any> {
+        val year = { texts: List<String?> -> texts.firstNotNullOfOrNull { Regex("""\b(19|20)\d{2}\b""").find(it.orEmpty())?.value } }
+        val tmdb = { id: String? -> id?.takeIf { Regex("""\d{1,9}""").matches(it) } }
+        val info = mutableMapOf<String, Any?>("title" to req.title.take(200))
+        when (val w = req.watching) {
+            is Watching.EpisodeItem -> {
+                val series = app.library.seriesInfo(w.seriesId)
+                info += mapOf("kind" to "episode", "season" to w.season, "episode" to w.episode,
+                    "year" to year(listOf(req.series?.releaseDate, series?.releaseDate, req.series?.name)), "tmdbId" to tmdb(series?.tmdbId))
+            }
+            is Watching.MovieItem -> {
+                val details = app.library.client?.movieInfo(w.streamId)
+                info += mapOf("kind" to "movie", "year" to year(listOf(details?.releaseDate, app.library.catalog.movieById[w.streamId]?.name, req.title)),
+                    "tmdbId" to tmdb(details?.tmdbId))
+            }
+            is Watching.LiveItem -> Unit
+        }
+        @Suppress("UNCHECKED_CAST")
+        return info.filterValues { it != null } as Map<String, Any>
     }
 
     /** Drag up and down to change the screen brightness (for this player only). */

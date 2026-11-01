@@ -33,6 +33,12 @@ struct IPTVPlayerView: View {
     @State private var aiCreditsTask: Task<Void, Never>?
     private static let aiCreditsCountdownSeconds = 10
 
+    // X-Ray (who's on screen): the open panel, and answers per item + 10-second stretch for this player session
+    @State private var xray: XRayRequest?
+    @State private var xrayCache: [String: SmartAI.XRayScene] = [:]
+    /// X-Ray paused a playing title: closing it plays on.
+    @State private var xrayResume = false
+
     // Dual Playback Engines: AVPlayer (for HLS/PiP) + VLCMediaPlayer (for MKV/TS/Dolby/Multi-Sub)
     @State private var avPlayer: AVPlayer?
     @State private var vlcPlayer: VLCMediaPlayer?
@@ -292,6 +298,9 @@ struct IPTVPlayerView: View {
         }
         .sheet(isPresented: $showAudioSubtitleSheet) {
             streamAndAudioOptionsSheet
+        }
+        .sheet(item: $xray, onDismiss: closeXRay) { request in
+            XRayView(heading: request.heading, subheading: request.subheading, load: request.load)
         }
     }
 
@@ -741,6 +750,25 @@ struct IPTVPlayerView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+
+                if item.contentType != .live {
+                    Button {
+                        openXRay()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.crop.square.badge.camera")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("X-Ray")
+                                .font(.system(size: 13, weight: .bold))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 Button {
                     refreshVLCTracks()
@@ -1912,16 +1940,92 @@ struct IPTVPlayerView: View {
     }
 
     /// The frame on screen as a small JPEG (nil while casting or before the first picture).
-    private func grabFrame() async -> Data? {
+    private func grabFrame(width: Int = 512) async -> Data? {
         guard !isDismissed, !isAirPlayActive, !isExternalPlaybackActive else { return nil }
         if useVLCEngine {
             guard let vlcPlayer else { return nil }
-            return await SmartAI.snapshot(vlcPlayer)
+            return await SmartAI.snapshot(vlcPlayer, width: Int32(width))
         }
         guard let output = videoOutput, let avItem = avPlayer?.currentItem, avItem.outputs.contains(output) else { return nil }
         let time = output.itemTime(forHostTime: CACurrentMediaTime())
         guard let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { return nil }
-        return SmartAI.jpeg(from: buffer)
+        return SmartAI.jpeg(from: buffer, width: CGFloat(width))
+    }
+
+    // MARK: - X-Ray
+
+    struct XRayRequest: Identifiable {
+        let id = UUID()
+        let heading: String
+        let subheading: String
+        let load: () async -> SmartAI.XRayScene?
+    }
+
+    /// Grabs the picture on screen (before pausing), pauses, and opens the X-Ray panel for that moment.
+    private func openXRay() {
+        guard item.contentType != .live, xray == nil else { return }
+        let position = currentTime
+        let resume = isPlaying
+        let frame = Task { await grabFrame(width: 768) }
+        if isPlaying { togglePlayPause() }
+        hideControlsTask?.cancel()
+        let key = "\(item.id):\(Int(position / 10))"
+        let current = item
+        let at = "at \(Self.clock(position))"
+        xrayResume = resume
+        xray = XRayRequest(
+            heading: cleanTitle,
+            subheading: current.contentType == .seriesEpisode ? current.subtitle.map { "\($0) • \(at)" } ?? at : at,
+            load: {
+                if let cached = xrayCache[key] { return cached }
+                let info = await xrayInfo(for: current)
+                let result = await SmartAI.shared.xrayScene(info: info, position: position, frame: await frame.value)
+                if let result { xrayCache[key] = result }
+                return result
+            }
+        )
+    }
+
+    private func closeXRay() {
+        // `xray` is already nil here; resume only if X-Ray paused a title that is still on screen.
+        if xrayResume, !isPlaying, !isDismissed { togglePlayPause() }
+        xrayResume = false
+        scheduleAutoHideControls()
+    }
+
+    /// What the xray function needs to find the title on TMDB: kind, name, year, the provider's TMDB id, episode numbers.
+    private func xrayInfo(for item: PlaybackItem) async -> [String: Any] {
+        var info: [String: Any] = ["title": String(XtreamTextFormatter.format(item.title).cleanTitle.prefix(200))]
+        func put(_ key: String, _ value: String?) {
+            if let value, !value.isEmpty { info[key] = value }
+        }
+        let tmdb = { (v: String?) -> String? in v.flatMap { $0.range(of: #"^\d{1,9}$"#, options: .regularExpression) != nil ? $0 : nil } }
+        let year = { (texts: [String?]) -> String? in texts.compactMap { $0.flatMap(SmartAI.year(in:)) }.first.map(String.init) }
+        if item.contentType == .seriesEpisode, let seriesID = item.seriesID {
+            info["kind"] = "episode"
+            let series = appState.seriesByID(seriesID)
+            let details = await appState.seriesInfo(for: seriesID)
+            let episode = details?.episodesBySeason.values.joined().first { $0.episodeId.value == item.episodeID }
+            info["season"] = episode?.season?.value ?? details?.episodesBySeason.first { $0.value.contains { $0.episodeId.value == item.episodeID } }?.key ?? 0
+            info["episode"] = episode?.episodeNum.value ?? 0
+            put("year", year([series?.releaseDate, details?.info?.releaseDate, series?.name]))
+            put("tmdbId", tmdb(details?.info?.tmdb?.value) ?? tmdb(details?.info?.tmdbId?.value))
+        } else {
+            info["kind"] = "movie"
+            let movie = item.streamID.flatMap { appState.movieByID($0) }
+            var details: XtreamVODInfoDetail?
+            if let streamID = item.streamID, let creds = appState.credentials {
+                details = try? await XtreamAPIService.shared.fetchVODInfo(credentials: creds, vodId: streamID)?.info
+            }
+            put("year", year([details?.releaseDate, movie?.name, item.title]))
+            put("tmdbId", tmdb(details?.tmdbId?.value) ?? tmdb(movie?.tmdb?.value))
+        }
+        return info
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 
     /// The credits really started: the title counts as watched, and the next episode is offered with a short countdown.

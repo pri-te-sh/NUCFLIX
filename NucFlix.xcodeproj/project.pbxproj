@@ -27,6 +27,7 @@
 		A10000170000000000000001 /* SeriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000170000000000000001 /* SeriesView.swift */; };
 		A10000180000000000000001 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000180000000000000001 /* SearchView.swift */; };
 		A10000190000000000000001 /* IPTVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000190000000000000001 /* IPTVPlayerView.swift */; };
+		C10000010000000000000000 /* XRayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000000 /* XRayView.swift */; };
 		A10000200000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000200000000000000001 /* Assets.xcassets */; };
 		A10000210000000000000001 /* MobileVLCKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000220000000000000001 /* MobileVLCKit.xcframework */; };
 		A10000220000000000000001 /* MobileVLCKit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A20000220000000000000001 /* MobileVLCKit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -82,6 +83,7 @@
 		A20000170000000000000001 /* SeriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeriesView.swift; sourceTree = "<group>"; };
 		A20000180000000000000001 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		A20000190000000000000001 /* IPTVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPTVPlayerView.swift; sourceTree = "<group>"; };
+		C20000010000000000000000 /* XRayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XRayView.swift; sourceTree = "<group>"; };
 		A20000200000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20000210000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000220000000000000001 /* MobileVLCKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MobileVLCKit.xcframework; path = Frameworks/MobileVLCKit.xcframework; sourceTree = "<group>"; };
@@ -196,6 +198,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000190000000000000001 /* IPTVPlayerView.swift */,
+				C20000010000000000000000 /* XRayView.swift */,
 			);
 			path = Player;
 			sourceTree = "<group>";
@@ -312,6 +315,7 @@
 				A10000170000000000000001 /* SeriesView.swift in Sources */,
 				A10000180000000000000001 /* SearchView.swift in Sources */,
 				A10000190000000000000001 /* IPTVPlayerView.swift in Sources */,
+				C10000010000000000000000 /* XRayView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

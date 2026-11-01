@@ -487,9 +487,13 @@ struct XtreamVODInfoDetail: Codable {
     var durationSecs: FlexibleInt?
     var duration: String?
     var rating: FlexibleString?
+    /// TMDB id, when the provider has one (X-Ray uses it to find the title): `tmdb_id` on movies, `tmdb` on series.
+    var tmdbId: FlexibleString?
+    var tmdb: FlexibleString?
 
     enum CodingKeys: String, CodingKey {
-        case name, director, actors, cast, description, plot, age, country, genre, duration, rating
+        case name, director, actors, cast, description, plot, age, country, genre, duration, rating, tmdb
+        case tmdbId = "tmdb_id"
         case coverBig = "cover_big"
         case movieImage = "movie_image"
         case releaseDate = "releasedate"

@@ -44,6 +44,47 @@ object SmartAI {
         return Verdict(r["label"] as? String ?: return null, (r["confidence"] as? Number)?.toDouble() ?: 0.0, probs)
     }
 
+    // ---------------------------------------------------------------- X-Ray (the xray function)
+    // Who's on screen (face matching against the title's TMDB cast), trivia from Wikipedia, actor pages.
+
+    data class XRayPerson(val id: Int, val name: String, val character: String, val photo: String)
+    data class XRayTitle(val type: String, val id: Int, val name: String, val year: String, val hasTrivia: Boolean)
+    /** [title] null: not found on TMDB. [scene] null: the frame couldn't be looked at. [faces]: faces in it, recognised or not. */
+    data class XRayScene(val title: XRayTitle?, val scene: List<XRayPerson>?, val faces: Int, val cast: List<XRayPerson>)
+    data class XRayCredit(val title: String, val year: String, val character: String, val poster: String)
+    data class XRayPersonDetail(val name: String, val bio: String, val born: String, val died: String, val place: String,
+                                val photo: String, val credits: List<XRayCredit>)
+
+    private fun Map<*, *>.str(key: String) = this[key] as? String ?: ""
+
+    private fun people(v: Any?): List<XRayPerson> = (v as? List<*>).orEmpty().mapNotNull { p ->
+        val m = p as? Map<*, *> ?: return@mapNotNull null
+        val id = (m["id"] as? Number)?.toInt() ?: return@mapNotNull null
+        XRayPerson(id, m.str("name"), m.str("character"), m.str("photo"))
+    }
+
+    /** Who's in [frame] (base64 JPEG, ~768 px) of a movie or episode. [info]: kind, title, year, tmdbId, season, episode. */
+    suspend fun xrayScene(info: Map<String, Any>, position: Double, frame: String?): XRayScene? {
+        val data = info + mapOf("position" to position.coerceAtLeast(0.0)) + (frame?.let { mapOf("image" to it) } ?: emptyMap())
+        val r = call("xray", data) ?: return null
+        val t = r["title"] as? Map<*, *>
+        if (r["found"] != true || t == null) return XRayScene(null, null, 0, emptyList())
+        val title = XRayTitle(t.str("type").ifEmpty { "movie" }, (t["id"] as? Number)?.toInt() ?: 0, t.str("name"), t.str("year"), t["trivia"] == true)
+        return XRayScene(title, r["scene"]?.let { people(it) }, (r["faces"] as? Number)?.toInt() ?: 0, people(r["cast"]))
+    }
+
+    suspend fun xrayPerson(id: Int): XRayPersonDetail? {
+        val r = call("xray", mapOf("action" to "person", "personId" to id)) ?: return null
+        val credits = (r["credits"] as? List<*>).orEmpty().mapNotNull { c ->
+            (c as? Map<*, *>)?.let { XRayCredit(it.str("title"), it.str("year"), it.str("character"), it.str("poster")) }
+        }
+        return XRayPersonDetail(r.str("name"), r.str("bio"), r.str("born"), r.str("died"), r.str("place"), r.str("photo"), credits)
+    }
+
+    /** A few behind-the-scenes facts from the title's Wikipedia article (empty when there are none). */
+    suspend fun xrayTrivia(type: String, id: Int): List<String> =
+        (call("xray", mapOf("action" to "trivia", "type" to type, "id" to id))?.get("facts") as? List<*>).orEmpty().filterIsInstance<String>()
+
     // ---------------------------------------------------------------- markers (users/{uid}/markers/{lineId}:{kind}:{id})
 
     /** Where a title's credits start / intro ends (found once, shared by every device). kind: movie | episode | series. */

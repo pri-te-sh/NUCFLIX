@@ -33,7 +33,7 @@ IPTV apps usually look like spreadsheets of channels. NucFlix turns any **Xtream
 - A "Who's watching?" screen with a profile for each person.
 - Continue Watching that follows you from the couch to your phone.
 - A bit of AI where it helps: it **sees** when the end credits really start, spots dead channels, keeps kids profiles kid-safe and understands searches like *"funny hindi movies from the 2010s"*.
-- **X-Ray** on the TV, as on Prime Video: pause and see who's in the scene, who they play, and what else they've been in.
+- **X-Ray**, as on Prime Video, on the TV and the phones: pause and see who's in the scene, who they play, and what else they've been in.
 
 You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 
@@ -48,6 +48,7 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 - Plays almost anything (MKV, TS, HLS…) with **MobileVLCKit**
 - **Smart Downloads** for offline viewing: they pause while anyone in the household is streaming from the line (most IPTV lines allow one connection), pick up where they stopped, and delete episodes once they've been watched
 - **AirPlay** and **Picture-in-Picture**
+- **X-Ray** in the player: who's in the scene, trivia, the full cast and actor pages
 - **Next episode when the credits start**, dead-channel check and smart search (see [Smart features](#-smart-features))
 - Sign in with **Google** or email
 - Manage people, kids profiles, IPTV lines and paired TVs
@@ -91,7 +92,7 @@ NucFlix uses two models on [Ollama Cloud](https://ollama.com), always through Fi
 
 X-Ray adds [TMDB](https://www.themoviedb.org) for cast data and photos, and an open-source face-recognition model that runs inside the Cloud Function.
 
-Everything except X-Ray works on both the iPhone and the Fire TV, and every feature falls back to the normal behaviour if the AI is unavailable.
+Everything works on both the iPhone and the Fire TV (X-Ray also in the Android phone app), and every feature falls back to the normal behaviour if the AI is unavailable.
 
 | | Feature | What you see |
 | --- | --- | --- |
@@ -100,7 +101,7 @@ Everything except X-Ray works on both the iPhone and the Fire TV, and every feat
 | 📡 | **Dead channel check** | About 13 seconds into a live channel showing a **black, frozen or "no signal"** picture, a banner offers the same station in another quality ("Try Sky News HD"), switching in place. |
 | 🧒 | **Kid-safe categories** | Every provider category gets tagged for kids-suitability, adult content, language and genre. Kids profiles only see kid-friendly categories, and adult ones are hidden even when the provider names them oddly. |
 | 🔎 | **Smart search** | Type a request like *"scary films from the 80s"* or *"cricket channels in hindi"* and a ✨ section shows matching titles, with the filters it understood ("Horror movies, 1980–1989"). |
-| 🎭 | **X-Ray** *(Fire TV)* | As on Prime Video: the **X-Ray** button in the player pauses and shows who is **in this scene** (photo, actor, character), trivia, and the full cast. Select a person for their bio and other titles. People are found by **face matching** against the title's cast photos from [TMDB](https://www.themoviedb.org), not by the AI models (which guessed the film's stars instead). If nobody on screen is recognised, it shows the full cast. |
+| 🎭 | **X-Ray** | As on Prime Video: the **X-Ray** button in the player pauses and shows who is **in this scene** (photo, actor, character), trivia, and the full cast. Select a person for their bio and other titles. People are found by **face matching** against the title's cast photos from [TMDB](https://www.themoviedb.org), not by the AI models (which guessed the film's stars instead). If nobody on screen is recognised, it shows the full cast. |
 
 ## 🖼 Screenshots
 
@@ -223,8 +224,9 @@ sequenceDiagram
 </details>
 
 <details>
-<summary><b>🎭 X-Ray (Fire TV)</b></summary>
+<summary><b>🎭 X-Ray</b></summary>
 
+- On the TV it's a panel beside the paused picture, driven by the remote; on the iPhone and Android phones it's a sheet over the player.
 - Pressing **X-Ray** grabs the frame on screen (~768 px JPEG), pauses, and calls the `xray` function with the title's name and year (and the provider's TMDB id when it has one).
 - The function finds the title on [TMDB](https://www.themoviedb.org) and takes its cast. An episode uses that episode's own credits, guest stars included, and falls back to the show's cast.
 - **Who's on screen is found by face matching, not by an AI model.** [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) finds the faces and [SFace](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface) turns each one into a 128-number embedding. Both are OpenCV Zoo models running on the function's CPU with onnxruntime. Each face is compared only with the photos of that title's cast, the first 30 billed actors who have one.
@@ -375,8 +377,8 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 - [x] Shared household account with people profiles and kids mode
 - [x] TV pairing, synced My List and Continue Watching
 - [x] AI: real end-credits detection, dead-channel check, kid-safe category tags, smart search
-- [x] X-Ray on Fire TV: who's in the scene by face matching, trivia, cast and actor pages
-- [ ] X-Ray on the iPhone, and the music playing in the scene
+- [x] X-Ray on Fire TV, iPhone and Android: who's in the scene by face matching, trivia, cast and actor pages
+- [ ] X-Ray: the music playing in the scene
 - [ ] Skip Intro by matching the opening across episodes (frame fingerprints)
 - [ ] Use AI tags for genre rows on the home screen
 - [ ] "Now playing" hand-off: move what's playing between phone and TV

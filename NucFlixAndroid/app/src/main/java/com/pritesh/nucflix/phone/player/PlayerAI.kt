@@ -17,6 +17,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 
@@ -183,11 +185,11 @@ class PlayerAI(
     }
 
     companion object {
-        /** The picture on screen as a ~512 px JPEG (base64), copied from the player's surface. */
-        suspend fun grab(view: PlayerView?): String? {
+        /** The picture on screen as a ~512 px (or [width]) JPEG (base64), copied from the player's surface. */
+        suspend fun grab(view: PlayerView?, width: Int = 512): String? {
             val surface = view?.videoSurfaceView as? SurfaceView ?: return null
             if (surface.width <= 0 || surface.height <= 0) return null
-            val w = 512
+            val w = width
             val h = (w * surface.height / surface.width).coerceAtLeast(1)
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val ok = suspendCancellableCoroutine { cont ->
@@ -196,9 +198,13 @@ class PlayerAI(
                 }.onFailure { cont.resume(false) }
             }
             if (!ok) return null
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 72, out)
-            return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            // Encoding takes tens of milliseconds (more for X-Ray's bigger frame): off the main thread.
+            return withContext(Dispatchers.Default) {
+                val out = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 72, out)
+                bitmap.recycle()
+                Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            }
         }
     }
 }

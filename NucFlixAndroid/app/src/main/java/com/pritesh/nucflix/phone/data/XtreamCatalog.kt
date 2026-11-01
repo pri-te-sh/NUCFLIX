@@ -122,7 +122,8 @@ class XtreamClient(private val line: CloudLine, private val cacheRoot: File) {
             val backdrops = info.opt("backdrop_path")
             val backdrop = (backdrops as? JSONArray)?.optString(0) ?: (backdrops as? String).orEmpty()
             SeriesInfo(info.optString("plot"), info.optString("cast"), info.optString("genre"),
-                info.optString("releaseDate", info.optString("release_date")), info.optString("cover"), backdrop, bySeason)
+                info.optString("releaseDate", info.optString("release_date")), info.optString("cover"), backdrop, bySeason,
+                info.optString("tmdb").ifEmpty { info.optString("tmdb_id") })
         }.getOrNull()
     }
 
@@ -145,7 +146,8 @@ class XtreamClient(private val line: CloudLine, private val cacheRoot: File) {
             MovieInfo(info.optString("plot").ifEmpty { info.optString("description") }, info.optString("cast"), info.optString("director"),
                 info.optString("genre"), info.optString("releasedate", info.optString("release_date")),
                 info.optString("duration_secs").toIntOrNull() ?: 0,
-                (backdrops as? JSONArray)?.optString(0) ?: (backdrops as? String).orEmpty())
+                (backdrops as? JSONArray)?.optString(0) ?: (backdrops as? String).orEmpty(),
+                info.optString("tmdb_id").ifEmpty { info.optString("tmdb") })
         }.getOrNull()
     }
 

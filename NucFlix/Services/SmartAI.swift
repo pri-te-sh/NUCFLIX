@@ -86,20 +86,104 @@ final class SmartAI {
     nonisolated private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     /// VLC writes snapshots to disk asynchronously; waits up to ~3 s for the file.
-    static func snapshot(_ player: VLCMediaPlayer) async -> Data? {
+    static func snapshot(_ player: VLCMediaPlayer, width: Int32 = 512) async -> Data? {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("nucflix-frame-\(UUID().uuidString).png").path
-        player.saveVideoSnapshot(at: path, withWidth: 512, andHeight: 0)
+        player.saveVideoSnapshot(at: path, withWidth: width, andHeight: 0)
         defer { try? FileManager.default.removeItem(atPath: path) }
         var lastSize = -1
         for _ in 0..<30 {
             try? await Task.sleep(nanoseconds: 100_000_000)
             let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
             if size > 0 && size == lastSize, let image = UIImage(contentsOfFile: path) {
-                return jpeg(from: image)
+                return jpeg(from: image, width: CGFloat(width))
             }
             lastSize = size
         }
         return nil
+    }
+
+    // MARK: - X-Ray (the xray function: who's on screen by face matching against the TMDB cast, trivia, actor pages)
+
+    struct XRayPerson: Identifiable, Hashable {
+        let id: Int
+        let name: String
+        let character: String
+        let photo: String
+    }
+
+    struct XRayTitle {
+        let type: String
+        let id: Int
+        let name: String
+        let year: String
+        let hasTrivia: Bool
+    }
+
+    /// `scene` is nil when the frame couldn't be looked at; `faces` counts the faces found in it, recognised or not.
+    struct XRayScene {
+        let title: XRayTitle?
+        let scene: [XRayPerson]?
+        let faces: Int
+        let cast: [XRayPerson]
+        var found: Bool { title != nil }
+    }
+
+    struct XRayCredit: Identifiable, Hashable {
+        let id = UUID()
+        let title: String
+        let year: String
+        let character: String
+        let poster: String
+    }
+
+    struct XRayPersonDetail {
+        let name: String
+        let bio: String
+        let born: String
+        let died: String
+        let place: String
+        let photo: String
+        let credits: [XRayCredit]
+    }
+
+    private static func people(_ v: Any?) -> [XRayPerson] {
+        (v as? [[String: Any]] ?? []).compactMap { p in
+            guard let id = (p["id"] as? NSNumber)?.intValue else { return nil }
+            return XRayPerson(id: id, name: p["name"] as? String ?? "", character: p["character"] as? String ?? "", photo: p["photo"] as? String ?? "")
+        }
+    }
+
+    /// Who's in the frame (a ~768 px JPEG) of a movie or episode. `info` carries kind, title, year, tmdbId,
+    /// season and episode (see the function). Returns nil when X-Ray couldn't answer at all.
+    func xrayScene(info: [String: Any], position: Double, frame: Data?) async -> XRayScene? {
+        var data = info
+        data["position"] = max(0, position)
+        if let frame { data["image"] = frame.base64EncodedString() }
+        guard let r = await call("xray", data) else { return nil }
+        guard r["found"] as? Bool == true, let t = r["title"] as? [String: Any] else {
+            return XRayScene(title: nil, scene: nil, faces: 0, cast: [])
+        }
+        let title = XRayTitle(type: t["type"] as? String ?? "movie", id: (t["id"] as? NSNumber)?.intValue ?? 0,
+                              name: t["name"] as? String ?? "", year: t["year"] as? String ?? "", hasTrivia: t["trivia"] as? Bool ?? false)
+        return XRayScene(title: title, scene: r["scene"] is NSNull || r["scene"] == nil ? nil : Self.people(r["scene"]),
+                         faces: (r["faces"] as? NSNumber)?.intValue ?? 0, cast: Self.people(r["cast"]))
+    }
+
+    func xrayPerson(id: Int) async -> XRayPersonDetail? {
+        guard let r = await call("xray", ["action": "person", "personId": id]) else { return nil }
+        let credits = (r["credits"] as? [[String: Any]] ?? []).map {
+            XRayCredit(title: $0["title"] as? String ?? "", year: $0["year"] as? String ?? "",
+                       character: $0["character"] as? String ?? "", poster: $0["poster"] as? String ?? "")
+        }
+        return XRayPersonDetail(name: r["name"] as? String ?? "", bio: r["bio"] as? String ?? "", born: r["born"] as? String ?? "",
+                                died: r["died"] as? String ?? "", place: r["place"] as? String ?? "", photo: r["photo"] as? String ?? "",
+                                credits: credits)
+    }
+
+    /// A few behind-the-scenes facts from the title's Wikipedia article (empty when there are none).
+    func xrayTrivia(type: String, id: Int) async -> [String] {
+        let r = await call("xray", ["action": "trivia", "type": type, "id": id])
+        return r?["facts"] as? [String] ?? []
     }
 
     // MARK: - Credits / intro markers (users/{uid}/markers, shared by the household)
