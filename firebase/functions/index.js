@@ -13,6 +13,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { createHash } from 'node:crypto';
 import { mockChat, mockDecision } from './mock.js';
 
 initializeApp();
@@ -366,4 +367,278 @@ export const smartSearch = onCall(options, async request => {
     yearTo: year(parsed.yearTo),
     sort: SORTS.includes(parsed.sort) ? parsed.sort : 'relevance'
   };
+});
+
+// ------------------------------------------------------------------ xray
+
+// X-Ray (who is on screen, as on Prime Video). The title's cast comes from TMDB; the people in the current frame
+// are found by face matching (faces.js) against the cast's TMDB photos. Vision LLMs were tried for this and named
+// the film's stars instead of who was on screen (Gemma 5/16, Clef ~6/16 labelled frames, face matching 16/16), so
+// the AI models only write the trivia. Results are cached in functions-only collections shared by all households
+// (it is public film data): titles and cast for 30 days, each actor's face embedding, and what was found in each
+// 10-second stretch of a title, so a scene is analysed once. Frames themselves are never stored.
+
+const TMDB_API_KEY = defineSecret('TMDB_API_KEY');
+// The emulator tests point these at a fake TMDB (see test/functions.test.js).
+const TMDB = process.env.TMDB_API || 'https://api.themoviedb.org/3';
+const TMDB_IMG = process.env.TMDB_IMG || 'https://image.tmdb.org/t/p';
+const WIKI_AGENT = 'NucFlix/1.0 (https://github.com/pri-te-sh/NUCFLIX)';
+const XRAY_FRESH = 30 * 86400 * 1000;
+const SCENE_SECONDS = 10;
+const MATCH_CAST = 30; // a face is compared with the first 30 billed cast members who have a photo
+// SFace cosine scores (OpenCV calls 0.363 the same person). On labelled frames, faces of people missing from the
+// cast list scored up to 0.31 but then never more than 0.07 above the next actor, so weaker matches need a lead.
+const MATCH_SURE = 0.36, MATCH_MIN = 0.25, MATCH_LEAD = 0.08;
+
+const xrayOptions = { ...options, secrets: [OLLAMA_API_KEY, TMDB_API_KEY], memory: '1GiB' };
+
+async function tmdb(path, params = {}) {
+  const key = TMDB_API_KEY.value();
+  const url = new URL(TMDB + path);
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') url.searchParams.set(k, String(v));
+  const headers = { Accept: 'application/json' };
+  if (key.startsWith('eyJ')) headers.Authorization = `Bearer ${key}`; // a v4 read access token
+  else url.searchParams.set('api_key', key);
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    logger.warn('tmdb error', { path, status: res.status });
+    throw new HttpsError('unavailable', `TMDB returned ${res.status}.`);
+  }
+  return res.json();
+}
+
+const imageURL = (size, path) => (path ? `${TMDB_IMG}/${size}${path}` : '');
+const yearOf = date => (String(date || '').match(/^\d{4}/) || [''])[0];
+const fresh = snap => snap.exists && Date.now() - (snap.get('at') || 0) < XRAY_FRESH;
+const castMember = c => ({ id: c.id, name: String(c.name || ''), character: String(c.character || ''), photo: c.profile_path || '' });
+
+/** The TMDB movie or show an IPTV title is ({ type, id }), from the provider's TMDB id or a search; null if none. */
+async function findTitle(kind, title, year, tmdbId) {
+  const type = kind === 'movie' ? 'movie' : 'tv';
+  if (tmdbId) return { type, id: Number(tmdbId) };
+  const name = title.replace(/\s*[([]?\b(19|20)\d{2}\b[)\]]?\s*$/, '').trim() || title;
+  const key = createHash('sha1').update(`${type}|${name.toLowerCase()}|${year || ''}`).digest('hex');
+  const ref = db.doc(`xrayLookups/${key}`);
+  const snap = await ref.get();
+  if (fresh(snap)) return snap.get('id') ? { type, id: snap.get('id') } : null;
+  const search = y => tmdb(`/search/${type}`, { query: name, include_adult: 'false', [type === 'movie' ? 'year' : 'first_air_date_year']: y });
+  let res = year ? await search(year) : null;
+  if (!res?.results?.length) res = await search(null);
+  const hit = res?.results?.[0];
+  await ref.set({ id: hit ? hit.id : null, at: Date.now() });
+  return hit ? { type, id: hit.id } : null;
+}
+
+/** A title's details and cast (for an episode: its own cast, guest stars included), cached. */
+async function loadTitle(ref, season, episode) {
+  const episodeKey = ref.type === 'tv' && season != null && episode != null ? `_s${season}e${episode}` : '';
+  const docId = `${ref.type}_${ref.id}${episodeKey}`;
+  const doc = db.doc(`xrayTitles/${docId}`);
+  const snap = await doc.get();
+  if (fresh(snap)) return { docId, ...snap.data() };
+  const info = await tmdb(`/${ref.type}/${ref.id}`, {
+    append_to_response: ref.type === 'movie' ? 'credits,external_ids' : 'aggregate_credits,external_ids'
+  });
+  if (!info) return null;
+  let cast = [];
+  if (ref.type === 'movie') {
+    cast = (info.credits?.cast || []).map(castMember);
+  } else {
+    const ep = episodeKey ? await tmdb(`/tv/${ref.id}/season/${season}/episode/${episode}/credits`).catch(() => null) : null;
+    if (ep) cast = [...(ep.cast || []), ...(ep.guest_stars || [])].map(castMember);
+    if (!cast.length) {
+      cast = (info.aggregate_credits?.cast || []).map(c => castMember({
+        ...c, character: (c.roles || []).map(r => r.character).filter(Boolean).slice(0, 2).join(' / ')
+      }));
+    }
+  }
+  const ids = new Set();
+  const data = {
+    type: ref.type, id: ref.id,
+    name: String(info.title || info.name || ''),
+    year: yearOf(info.release_date || info.first_air_date),
+    overview: String(info.overview || '').slice(0, 800),
+    wikidata: info.external_ids?.wikidata_id || '',
+    cast: cast.filter(c => c.name && !ids.has(c.id) && ids.add(c.id)).slice(0, 60),
+    at: Date.now()
+  };
+  await doc.set(data);
+  return { docId, ...data };
+}
+
+/** Face embeddings of the first billed cast members, from their TMDB photos (worked out once per photo). */
+async function castFaces(cast, facesIn) {
+  const people = cast.filter(c => c.photo).slice(0, MATCH_CAST);
+  if (!people.length) return new Map();
+  const snaps = await db.getAll(...people.map(c => db.doc(`xrayFaces/${c.id}`)));
+  const out = new Map();
+  const todo = [];
+  snaps.forEach((s, i) => {
+    const c = people[i];
+    if (s.exists && s.get('photo') === c.photo) {
+      if (s.get('embedding')) out.set(c.id, s.get('embedding'));
+    } else todo.push(c);
+  });
+  for (let i = 0; i < todo.length; i += 4) {
+    await Promise.all(todo.slice(i, i + 4).map(async c => {
+      let embedding = null;
+      try {
+        const res = await fetch(imageURL('h632', c.photo), { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) return; // not cached: tried again next time
+        const face = (await facesIn(Buffer.from(await res.arrayBuffer())))[0]; // biggest face in the photo
+        embedding = face ? face.embedding.map(x => Math.round(x * 1e5) / 1e5) : null;
+      } catch (e) {
+        logger.warn('xray photo', { person: c.id, error: String(e) });
+        return;
+      }
+      if (embedding) out.set(c.id, embedding);
+      await db.doc(`xrayFaces/${c.id}`).set({ photo: c.photo, embedding, at: Date.now() });
+    }));
+  }
+  return out;
+}
+
+/** Cast members whose faces are in the frame: [{ id, score }], one face each, best first. */
+function matchFaces(faces, refs, similarityOf) {
+  const found = [];
+  for (const f of faces) {
+    const [best, next] = [...refs].map(([id, e]) => ({ id, score: similarityOf(f.embedding, e) })).sort((a, b) => b.score - a.score);
+    if (!best) continue;
+    const lead = best.score - (next ? next.score : 0);
+    if (best.score >= MATCH_SURE || (best.score >= MATCH_MIN && lead >= MATCH_LEAD)) found.push(best);
+  }
+  const seen = new Set();
+  return found.sort((a, b) => b.score - a.score)
+    .filter(p => !seen.has(p.id) && seen.add(p.id))
+    .map(p => ({ id: p.id, score: round(p.score) }));
+}
+
+const intIn = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+
+async function xrayScene(owner, d) {
+  if (!['movie', 'episode'].includes(d.kind) || !str(d.title, 200)) throw new HttpsError('invalid-argument', 'Send kind and title.');
+  if (d.year != null && !/^\d{4}$/.test(String(d.year))) throw new HttpsError('invalid-argument', 'Bad year.');
+  if (d.tmdbId != null && !/^\d{1,9}$/.test(String(d.tmdbId))) throw new HttpsError('invalid-argument', 'Bad TMDB id.');
+  if (d.kind === 'episode' && !(intIn(d.season, 0, 999) && intIn(d.episode, 0, 9999))) throw new HttpsError('invalid-argument', 'Send season and episode.');
+  if (typeof d.position !== 'number' || !(d.position >= 0 && d.position < 1e6)) throw new HttpsError('invalid-argument', 'Bad position.');
+  if (d.image != null && !checkImage(d.image)) throw new HttpsError('invalid-argument', 'Send one JPEG/PNG frame.');
+  const season = d.kind === 'episode' ? d.season : null, episode = d.kind === 'episode' ? d.episode : null;
+
+  let t = null;
+  const ref = await findTitle(d.kind, d.title, d.year, d.tmdbId);
+  if (ref) t = await loadTitle(ref, season, episode);
+  if (!t && d.tmdbId) { // a provider's TMDB id can be wrong (or for the other type): search instead
+    const searched = await findTitle(d.kind, d.title, d.year, null);
+    if (searched) t = await loadTitle(searched, season, episode);
+  }
+  if (!t) return { found: false };
+
+  const sceneRef = db.doc(`xrayScenes/${t.docId}_${Math.floor(d.position / SCENE_SECONDS)}`);
+  const snap = await sceneRef.get();
+  let scene = fresh(snap) ? snap.data() : null;
+  if (!scene && d.image && t.cast.some(c => c.photo)) {
+    await spend(owner, 1);
+    const { facesIn, similarityOf } = await import('./faces.js'); // onnxruntime loads only where X-Ray runs
+    const faces = await facesIn(Buffer.from(d.image, 'base64'));
+    const people = faces.length ? matchFaces(faces, await castFaces(t.cast, facesIn), similarityOf) : [];
+    scene = { people, faces: faces.length, at: Date.now() };
+    await sceneRef.set(scene);
+    logger.info('xray scene', { title: t.name, docId: t.docId, position: Math.round(d.position), faces: faces.length, scores: people.map(p => p.score) });
+  }
+  const byId = new Map(t.cast.map(c => [c.id, c]));
+  const person = c => ({ id: c.id, name: c.name, character: c.character, photo: imageURL('w185', c.photo) });
+  return {
+    found: true,
+    title: { type: t.type, id: t.id, name: t.name, year: t.year, overview: t.overview, trivia: !!t.wikidata },
+    scene: scene ? scene.people.filter(p => byId.has(p.id)).map(p => ({ ...person(byId.get(p.id)), score: p.score })) : null,
+    faces: scene ? scene.faces : 0,
+    cast: t.cast.slice(0, 40).map(person)
+  };
+}
+
+async function xrayPerson(d) {
+  const id = String(d.personId ?? '');
+  if (!/^\d{1,10}$/.test(id)) throw new HttpsError('invalid-argument', 'Bad person.');
+  const ref = db.doc(`xrayPeople/${id}`);
+  const snap = await ref.get();
+  let p = fresh(snap) ? snap.data() : null;
+  if (!p) {
+    const info = await tmdb(`/person/${id}`, { append_to_response: 'combined_credits' });
+    if (!info) throw new HttpsError('not-found', 'Unknown person.');
+    const seen = new Set();
+    const credits = (info.combined_credits?.cast || [])
+      // Talk shows, news and award shows (appearances "as Self") aren't what a viewer means by other titles.
+      .filter(c => !(c.genre_ids || []).some(g => g === 10767 || g === 10763) && !/^(self|himself|herself|themselves)\b/i.test(c.character || ''))
+      .sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0))
+      .filter(c => !seen.has(`${c.media_type}${c.id}`) && seen.add(`${c.media_type}${c.id}`))
+      .slice(0, 12)
+      .map(c => ({ title: String(c.title || c.name || ''), year: yearOf(c.release_date || c.first_air_date), character: String(c.character || ''), type: c.media_type, poster: c.poster_path || '' }));
+    p = {
+      id: info.id, name: String(info.name || ''), bio: String(info.biography || '').slice(0, 1500),
+      born: info.birthday || '', died: info.deathday || '', place: String(info.place_of_birth || ''),
+      photo: info.profile_path || '', credits, at: Date.now()
+    };
+    await ref.set(p);
+  }
+  const { at, ...rest } = p;
+  return { ...rest, photo: imageURL('h632', p.photo), credits: p.credits.map(c => ({ ...c, poster: imageURL('w185', c.poster) })) };
+}
+
+/** The title's English Wikipedia article, without the plot (trivia must not spoil it), or ''. */
+async function wikiArticle(wikidataId) {
+  const get = async url => {
+    const res = await fetch(url, { headers: { 'User-Agent': WIKI_AGENT }, signal: AbortSignal.timeout(10000) });
+    return res.ok ? res.json() : null;
+  };
+  const entity = await get(`https://www.wikidata.org/wiki/Special:EntityData/${wikidataId}.json`);
+  const page = entity?.entities?.[wikidataId]?.sitelinks?.enwiki?.title;
+  if (!page) return '';
+  const res = await get(`https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&redirects=1&format=json&titles=${encodeURIComponent(page)}`);
+  const text = String(Object.values(res?.query?.pages || {})[0]?.extract || '');
+  const parts = text.split(/\n==+ *([^=\n]+?) *==+\n/); // [intro, heading, body, heading, body...]
+  let out = parts[0];
+  for (let i = 1; i < parts.length; i += 2) {
+    if (/production|development|pre-production|casting|filming|photography|music|soundtrack|score|writing|design|effects|release|reception|legacy|background|accolades/i.test(parts[i])) {
+      out += `\n\n${parts[i]}\n${parts[i + 1] || ''}`;
+    }
+  }
+  return out.slice(0, 14000);
+}
+
+async function xrayTrivia(owner, d) {
+  if (!['movie', 'tv'].includes(d.type) || !/^\d{1,9}$/.test(String(d.id ?? ''))) throw new HttpsError('invalid-argument', 'Bad title.');
+  const ref = db.doc(`xrayTrivia/${d.type}_${d.id}`);
+  const snap = await ref.get();
+  if (fresh(snap)) return { facts: snap.get('facts') || [] };
+  const t = await loadTitle({ type: d.type, id: Number(d.id) });
+  let facts = [];
+  const article = t?.wikidata ? await wikiArticle(t.wikidata).catch(() => '') : '';
+  if (article.length > 400) {
+    await spend(owner, 1);
+    const system = 'You write X-Ray trivia for a video player, like Prime Video\'s. From the Wikipedia article the user '
+      + 'gives, pick up to 5 short, surprising facts about how the title was made: casting, filming, music, production, '
+      + 'reception. Use only facts stated in the article. Never reveal the plot or the ending. Each fact is one or two '
+      + 'sentences, under 220 characters. Reply with ONLY a JSON array of strings.';
+    const reply = await chat([{ role: 'system', content: system }, { role: 'user', content: `Title: ${t.name} (${t.year})\n\n${article}` }]);
+    try {
+      const list = JSON.parse((reply.match(/\[[\s\S]*\]/) || ['[]'])[0]);
+      facts = (Array.isArray(list) ? list : []).filter(f => str(f, 300)).slice(0, 6);
+    } catch (e) { facts = []; }
+  }
+  await ref.set({ facts, at: Date.now() });
+  return { facts };
+}
+
+/**
+ * X-Ray for the player. action 'scene' (default): who is on screen in a movie or episode frame, with the title's
+ * cast to fall back on ({ found, title, scene: [...] | null, faces, cast }); 'person': an actor's bio and best-known
+ * titles; 'trivia': a few behind-the-scenes facts drawn from the title's Wikipedia article.
+ */
+export const xray = onCall(xrayOptions, async request => {
+  const owner = await household(request);
+  const d = request.data || {};
+  if (d.action === 'person') return xrayPerson(d);
+  if (d.action === 'trivia') return xrayTrivia(owner, d);
+  return xrayScene(owner, d);
 });

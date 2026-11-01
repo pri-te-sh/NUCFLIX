@@ -1,4 +1,5 @@
 // Deterministic stand-ins for Ollama, used only in the local emulator (OLLAMA_API_KEY=mock).
+// X-Ray trivia comes back as the first sentences of the article it was given.
 // Frame answers come from functions/.mock-frames.json ({"credits": "end_credits", "intro": "intro",
 // "live": "black"}), re-read on every call so a test can flip them while an app is running.
 
@@ -58,6 +59,11 @@ export function mockDecision(body) {
 }
 
 export function mockChat(messages) {
+  if (/X-Ray trivia/.test(messages[0].content)) {
+    // Trivia: the article's first sentences, as a JSON array.
+    const text = messages[messages.length - 1].content.split('\n\n').slice(1).join(' ');
+    return JSON.stringify((text.match(/[^.!?]+[.!?]/g) || []).slice(0, 3).map(s => s.trim()));
+  }
   const q = messages[messages.length - 1].content.toLowerCase();
   const years = (q.match(/\b(19|20)\d{2}\b/g) || []).map(Number);
   const decade = q.match(/\b(19|20)(\d)0s\b/);

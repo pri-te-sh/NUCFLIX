@@ -3,3 +3,4 @@ node_modules/
 functions/node_modules/
 functions/.secret.local
 functions/.mock-frames.json
+functions/models/

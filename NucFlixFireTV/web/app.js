@@ -64,7 +64,8 @@
     aspect: '<svg viewBox="0 0 24 24" class="ico"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10v4M17 10v4"/></svg>',
     format: '<svg viewBox="0 0 24 24" class="ico"><path d="M4 7h16M4 12h10M4 17h6"/></svg>',
     keyboard: '<svg viewBox="0 0 24 24" class="ico"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>',
-    tv: '<svg viewBox="0 0 24 24" class="ico"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'
+    tv: '<svg viewBox="0 0 24 24" class="ico"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+    xray: '<svg viewBox="0 0 24 24" class="ico"><circle cx="12" cy="9.5" r="3"/><path d="M6.5 18.5c1-3 3-4.5 5.5-4.5s4.5 1.5 5.5 4.5M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4"/></svg>'
   };
 
   // ------------------------------------------------------------------ Persistent Store
@@ -3540,6 +3541,7 @@
         it.kind === 'episode' && this.nextEpisode() ? btn('p-next', 'Next Episode', ICON.next, () => this.playNext()) : ''
       ].join('');
       const right = [
+        live ? '' : btn('p-xray', 'X-Ray', ICON.xray, () => XRay.show()),
         live ? btn('p-format', S.prefs.liveFormat.toUpperCase().replace('_ROOT', ' ROOT'), ICON.format, () => this.cycleFormat()) : '',
         live ? btn('p-epg', 'Guide', ICON.epg, () => openEPGDrawer(it.channel, it.channelList)) : '',
         it.kind === 'episode' ? btn('p-eps', 'Episodes', ICON.epg, () => this.episodePicker()) : '',
@@ -4040,6 +4042,195 @@
     }
   };
   Screens.player = Player;
+
+  // ------------------------------------------------------------------ X-Ray (who's on screen, as on Prime Video)
+  // Opens over the paused picture: the people in the current frame (found by face matching in the xray Cloud
+  // Function, against the title's TMDB cast), trivia from the title's Wikipedia article, and the full cast, which
+  // is also the fallback when nobody on screen is recognised. Picking a person shows their bio and other titles.
+
+  const XRay = {
+    open: null, // { item, wrap } while the panel is up
+    cache: new Map(), // `${uid}:${10-second stretch}` -> answer
+    vod: new Map(), // movie streamId -> get_vod_info "info"
+    people: new Map(),
+    trivia: new Map(),
+
+    badge: `<div class="xray-badge">${ICON.xray}<span>X-Ray</span></div>`,
+
+    async show() {
+      const it = Player.item;
+      if (!it || it.kind === 'live' || this.open) return;
+      const position = Player.st.position || 0;
+      const resume = !!Player.st.playing;
+      const shot = Promise.resolve().then(() => Smart.frame(768)).catch(() => null); // the picture the viewer saw, before pausing
+      if (resume) VideoAPI.togglePause();
+      Player.hideOSD();
+      modalLayer.classList.add('xray-on');
+      const wrap = Modal.open(`
+        <div class="xray-panel">
+          <div class="xray-head">${this.badge}
+            <div class="xray-title">${esc(it.kind === 'episode' ? it.seriesTitle : it.title)}</div>
+            <div class="xray-sub">${esc(it.kind === 'episode' ? it.subtitle + ' • ' : '')}at ${fmtTime(position)}</div>
+          </div>
+          <div class="xray-body" data-scroll="y" data-margin="80">
+            <div class="xray-note focusable"><div class="spinner"></div>Looking at this scene…</div>
+          </div>
+        </div>`, {
+        onClose: () => {
+          this.open = null;
+          modalLayer.classList.remove('xray-on');
+          if (Player.item !== it) return;
+          if (resume) VideoAPI.togglePause();
+          Player.showOSD();
+          const b = $('#player-screen [data-fk="p-xray"]');
+          if (b) Focus.set(b);
+        }
+      });
+      wrap.classList.add('xray-wrap');
+      this.open = { item: it, wrap };
+      const res = await this.scene(it, position, shot);
+      if (!this.open || this.open.wrap !== wrap) return; // closed meanwhile
+      this.draw(wrap, res);
+    },
+
+    async scene(it, position, shot) {
+      const key = `${it.uid}:${Math.floor(position / 10)}`;
+      if (this.cache.has(key)) return this.cache.get(key);
+      const [meta, frame] = await Promise.all([this.meta(it), shot]);
+      const req = Object.assign({ position }, meta);
+      if (frame && frame.b64 && !frame.black) req.image = frame.b64;
+      const res = await Smart.xray(req);
+      if (res) this.cache.set(key, res);
+      return res;
+    },
+
+    /** What the server needs to find the title on TMDB: name, year, and the provider's TMDB id when it has one. */
+    async meta(it) {
+      const yearIn = v => (String(v || '').match(/\b(19|20)\d{2}\b/) || [])[0];
+      const tmdbOf = info => { const v = String((info && (info.tmdb_id || info.tmdb)) || ''); return /^\d{1,9}$/.test(v) ? v : undefined; };
+      if (it.kind === 'episode') {
+        const info = (it.sInfo && it.sInfo.info) || {};
+        return {
+          kind: 'episode', title: String(it.seriesTitle).slice(0, 200),
+          year: yearIn(it.series.releaseDate || info.releaseDate || info.release_date || it.series.name),
+          tmdbId: tmdbOf(info), season: Number(it.episode.season) || 0, episode: Number(it.episode.episodeNum) || 0
+        };
+      }
+      if (!this.vod.has(it.streamId)) {
+        const res = await XtreamAPI.fetchVODInfo(S.creds, it.streamId).catch(() => null);
+        this.vod.set(it.streamId, (res && res.info) || {});
+      }
+      const info = this.vod.get(it.streamId);
+      return {
+        kind: 'movie', title: String(it.title).slice(0, 200),
+        year: yearIn(info.releasedate || info.release_date || (it.data && it.data.name)), tmdbId: tmdbOf(info)
+      };
+    },
+
+    card(p, cls) {
+      const initials = String(p.name || '?').split(/\s+/).map(w => w[0] || '').slice(0, 2).join('');
+      return `
+        <div class="xray-person ${cls} focusable" ${act(() => this.person(p))}>
+          <div class="xray-photo"><span>${esc(initials)}</span>${imgTag(p.photo, '', 240)}</div>
+          <div class="xray-names"><b>${esc(p.name)}</b>${p.character ? `<span>${esc(p.character)}</span>` : ''}</div>
+        </div>`;
+    },
+
+    draw(wrap, res) {
+      const body = wrap.querySelector('.xray-body');
+      if (!res || !res.found) {
+        mount(body, `<div class="xray-note focusable">${res
+          ? 'X-Ray couldn’t find this title’s cast.'
+          : 'X-Ray couldn’t load right now. Check the connection and try again.'}</div>`);
+        Focus.set(Focus.first(body));
+        return;
+      }
+      const scene = res.scene || [];
+      const why = res.scene == null ? 'X-Ray couldn’t see this scene.'
+        : res.faces ? 'X-Ray doesn’t recognise anyone on screen right now.' : 'Nobody is on screen right now.';
+      const year = res.title.year ? ` (${res.title.year})` : '';
+      mount(body, `
+        <section class="xray-section">
+          <h3>In this scene</h3>
+          ${scene.length ? scene.map(p => this.card(p, 'big')).join('') : `<div class="xray-note focusable">${why} Here’s the full cast of ${esc(res.title.name)}${esc(year)}.</div>`}
+        </section>
+        <section class="xray-section" id="xray-trivia" hidden></section>
+        <section class="xray-section">
+          <h3>${scene.length ? 'All cast' : 'Cast'}</h3>
+          <div class="xray-cast" data-group="xray-cast">${res.cast.map(p => this.card(p, 'small')).join('') || '<div class="xray-note focusable">No cast listed.</div>'}</div>
+        </section>`);
+      Focus.memory['xray-cast'] = body.querySelector('.xray-cast .xray-person');
+      Focus.set(Focus.first(body));
+      if (res.title.trivia) this.loadTrivia(wrap, res.title);
+    },
+
+    async loadTrivia(wrap, title) {
+      const key = `${title.type}_${title.id}`;
+      let facts = this.trivia.get(key);
+      if (!facts) {
+        const r = await Smart.xray({ action: 'trivia', type: title.type, id: title.id });
+        facts = (r && r.facts) || [];
+        if (r) this.trivia.set(key, facts);
+      }
+      const el = wrap.isConnected && wrap.querySelector('#xray-trivia');
+      if (!el || !facts.length) return;
+      mount(el, `<h3>Trivia</h3>${facts.map(f => `<div class="xray-fact focusable">${esc(f)}</div>`).join('')}`);
+      el.hidden = false;
+    },
+
+    async person(p) {
+      const wrap = Modal.open(`
+        <div class="xray-panel wide">
+          <div class="xray-head">${this.badge}
+            <div class="xray-title">${esc(p.name)}</div>
+            ${p.character ? `<div class="xray-sub">as ${esc(p.character)}</div>` : ''}
+          </div>
+          <div class="xray-body" data-scroll="y" data-margin="80"><div class="xray-note focusable"><div class="spinner"></div>Loading…</div></div>
+        </div>`);
+      wrap.classList.add('xray-wrap');
+      let d = this.people.get(p.id);
+      if (!d) {
+        d = await Smart.xray({ action: 'person', personId: p.id });
+        if (d) this.people.set(p.id, d);
+      }
+      if (!wrap.isConnected) return;
+      const body = wrap.querySelector('.xray-body');
+      if (!d) {
+        mount(body, '<div class="xray-note focusable">Couldn’t load more about this person right now.</div>');
+        Focus.set(Focus.first(body));
+        return;
+      }
+      const date = v => (v ? new Date(v + 'T12:00:00').toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+      const facts = [
+        d.born ? `<div><span>Born</span>${esc(date(d.born))}${d.place ? ` in ${esc(d.place)}` : ''}</div>` : '',
+        d.died ? `<div><span>Died</span>${esc(date(d.died))}</div>` : ''
+      ].join('');
+      const paras = String(d.bio || '').split(/\n+/).map(t => t.trim()).filter(Boolean);
+      mount(body, `
+        <div class="xray-bio focusable" data-anchor="top">
+          <div class="xray-photo tall"><span></span>${imgTag(d.photo || p.photo, '', 400)}</div>
+          <div class="xray-bio-text">
+            ${facts ? `<div class="xray-facts">${facts}</div>` : ''}
+            ${paras.length ? `<p>${esc(paras[0])}</p>` : '<p class="muted">No biography yet.</p>'}
+          </div>
+        </div>
+        ${paras.slice(1).map(t => `<p class="xray-para focusable">${esc(t)}</p>`).join('')}
+        ${d.credits.length ? `
+          <section class="xray-section">
+            <h3>Known for</h3>
+            <div class="xray-credits" data-group="xray-credits" data-scroll="x" data-margin="40">
+              ${d.credits.map(c => `
+                <div class="xray-credit focusable">
+                  <div class="xray-poster">${imgTag(c.poster, '', 240)}<span>${esc(c.title)}</span></div>
+                  <b>${esc(c.title)}</b><small>${esc([c.year, c.character].filter(Boolean).join(' • '))}</small>
+                </div>`).join('')}
+            </div>
+          </section>` : ''}`);
+      // Coming down into the row lands on its first title (else the one nearest the middle of the text above).
+      Focus.memory['xray-credits'] = body.querySelector('.xray-credit');
+      Focus.set(Focus.first(body));
+    }
+  };
 
   // ------------------------------------------------------------------ Global key handling
 

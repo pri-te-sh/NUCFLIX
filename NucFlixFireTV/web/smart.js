@@ -60,6 +60,9 @@ const Smart = (() => {
     return r;
   }
 
+  /** X-Ray (see the xray function): who is in a frame, a person's details, or trivia. null when it failed. */
+  const xray = data => call('xray', data);
+
   // ---------------------------------------------------------------- live channel alternatives
 
   const QUALITY = /\b(uhd|fhd|hd|sd|4k|8k|hevc|h265|backup|bk|raw|vip|plus|\d{3,4}p|50fps|60fps)\b/gi;
@@ -235,5 +238,5 @@ const Smart = (() => {
     return parts.charAt(0).toUpperCase() + parts.slice(1) + (years ? `, ${years}` : '') + words;
   }
 
-  return { frame, onFrame, frameCheck, alternatives, Tags, Kids, searchFilters, applyFilters, describe, recent, get disabled() { return disabled; } };
+  return { frame, onFrame, frameCheck, xray, alternatives, Tags, Kids, searchFilters, applyFilters, describe, recent, get disabled() { return disabled; } };
 })();

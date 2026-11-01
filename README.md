@@ -95,6 +95,7 @@ Everything works on both the iPhone and the Fire TV, and every feature falls bac
 | 📡 | **Dead channel check** | About 13 seconds into a live channel showing a **black, frozen or "no signal"** picture, a banner offers the same station in another quality ("Try Sky News HD"), switching in place. |
 | 🧒 | **Kid-safe categories** | Every provider category gets tagged for kids-suitability, adult content, language and genre. Kids profiles only see kid-friendly categories, and adult ones are hidden even when the provider names them oddly. |
 | 🔎 | **Smart search** | Type a request like *"scary films from the 80s"* or *"cricket channels in hindi"* and a ✨ section shows matching titles, with the filters it understood ("Horror movies, 1980–1989"). |
+| 🎭 | **X-Ray** *(Fire TV)* | As on Prime Video: the **X-Ray** button in the player pauses and shows who is **in this scene** (photo, actor, character), trivia, and the full cast. Select a person for their bio and other titles. People are found by **face matching** against the title's cast photos from [TMDB](https://www.themoviedb.org), not by the AI models (which guessed the film's stars instead). If nobody on screen is recognised, it shows the full cast. |
 
 ## 🖼 Screenshots
 
@@ -254,8 +255,10 @@ npm run deploy:rules   # deploy once they pass
 ```bash
 cd firebase/functions && npm install && cd ..
 npx firebase functions:secrets:set OLLAMA_API_KEY   # paste your Ollama key when asked; it lives in Secret Manager
-npm run test:functions                               # emulator tests with a fake AI (no key needed)
-npm run deploy:functions                             # frameCheck, classifyCategories, smartSearch in us-central1
+npx firebase functions:secrets:set TMDB_API_KEY     # X-Ray: a free TMDB API key (v3 key or v4 read token)
+functions/fetch-models.sh                            # X-Ray face models (not in git; deploy also runs this)
+npm run test:functions                               # emulator tests with a fake AI and a fake TMDB (no keys needed)
+npm run deploy:functions                             # frameCheck, classifyCategories, kidsTitles, smartSearch, xray in us-central1
 ```
 
 - Each household gets **4,000 AI calls a day** (`DAILY_LIMIT` in `functions/index.js`). Normal viewing uses a few dozen; tagging a big catalog the first time uses one call per 16 categories.
@@ -299,12 +302,13 @@ cd NucFlixFireTV
 ### 🧪 Developing against the emulators
 
 ```bash
-echo 'OLLAMA_API_KEY=mock' > firebase/functions/.secret.local   # once: fake AI answers, no key or cost
+printf 'OLLAMA_API_KEY=mock\nTMDB_API_KEY=mock\n' > firebase/functions/.secret.local   # once: fake AI answers, no key or cost
 cd firebase && npx firebase emulators:start --only auth,firestore,functions
 ```
 
 - **iPhone:** debug builds launched with `-useFirebaseEmulator` use Auth on port 9099, Firestore on 8181 and Functions on 5001.
 - **Fire TV UI:** serve `NucFlixFireTV/web/` from `localhost` in a desktop browser and it uses the emulators automatically.
+- **X-Ray locally:** start the emulators with `TMDB_API=<fake TMDB>/3 TMDB_IMG=<fake TMDB>/img` (the tests use `test/fake-tmdb.js`), or with a real `TMDB_API_KEY` in `.secret.local`. If the emulator ports are taken, open the page with `?emulators=<auth>,<firestore>,<functions>` ports.
 - **Fake AI answers:** the mock tags categories from their names and parses searches with simple rules. Frame answers come from `firebase/functions/.mock-frames.json`, which you can edit while an app is running, e.g. `{"credits": "end_credits", "intro": "intro", "live": "black"}`.
 
 ## 📁 Project layout
@@ -323,7 +327,7 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 │   ├── web/                  10-foot UI (HTML/CSS/JS), Firebase sync (cloud.js), AI helpers (smart.js)
 │   └── build.sh              Gradle-less build
 ├── firebase/                 Firestore rules, emulator tests, deploy scripts
-│   └── functions/            AI Cloud Functions (Ollama Clef + Gemma 4) and their mock
+│   └── functions/            AI Cloud Functions (Ollama Clef + Gemma 4), X-Ray (TMDB + face matching) and their mocks
 ├── scripts/fetch-vlckit.sh   downloads the iOS player engine
 └── docs/images/              README artwork
 ```
@@ -338,6 +342,7 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 - **Expiring pairing codes.** Codes last at most 15 minutes and are deleted once used.
 - **The AI key never leaves the server.** It's a Cloud Functions secret; the apps only call the household's functions, which check the caller is the account owner or a paired TV and enforce a daily limit.
 - **What the AI sees.** Small (~512 px) JPEG frames during the checks described above, category names, and search text. Never your IPTV login, profiles or watch history. Frames are not stored.
+- **X-Ray.** When you open it, one ~768 px frame goes to the `xray` function, which compares the faces in it with the title's cast photos. The frame is not stored; what is kept (shared by all households, since it is public film data) is the title's cast, each actor's face embedding from their TMDB photo, and which cast members were in each 10-second stretch of the title. Titles are looked up on TMDB by name and year, and the TMDB key stays in Secret Manager.
 - **Release builds aren't debuggable.** The Fire TV WebView can only be inspected in `--debug` builds.
 
 ## 🗺 Roadmap

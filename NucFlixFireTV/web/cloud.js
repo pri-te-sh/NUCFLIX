@@ -12,6 +12,8 @@ const Cloud = (() => {
   const PROGRESS_INTERVAL = 20000;
   // The desktop browser preview talks to the local emulators; the Fire TV app (https://app.local) to Firebase.
   const EMULATOR = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  // Emulator ports: auth, firestore, functions. ?emulators=9199,8281,5101 picks others (when the defaults are busy).
+  const EMU_PORTS = ((new URLSearchParams(location.search).get('emulators') || '').match(/^(\d+),(\d+),(\d+)$/) || [0, 9099, 8181, 5001]).slice(1).map(Number);
 
   let db = null;
   let auth = null;
@@ -54,9 +56,9 @@ const Cloud = (() => {
       db = firebase.firestore();
       functions = firebase.app().functions('us-central1');
       if (EMULATOR) {
-        auth.useEmulator('http://127.0.0.1:9099', { disableWarnings: true });
-        db.useEmulator('127.0.0.1', 8181);
-        functions.useEmulator('127.0.0.1', 5001);
+        auth.useEmulator(`http://127.0.0.1:${EMU_PORTS[0]}`, { disableWarnings: true });
+        db.useEmulator('127.0.0.1', EMU_PORTS[1]);
+        functions.useEmulator('127.0.0.1', EMU_PORTS[2]);
       }
       FieldValue = firebase.firestore.FieldValue;
       Timestamp = firebase.firestore.Timestamp;
