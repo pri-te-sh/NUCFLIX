@@ -14,6 +14,7 @@
 ![Firebase](https://img.shields.io/badge/Firebase-DD2C00?style=for-the-badge&logo=firebase&logoColor=white)
 ![Media3](https://img.shields.io/badge/Media3%20ExoPlayer-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![Ollama](https://img.shields.io/badge/Ollama%20Cloud-Clef%20%2B%20Gemma%204-000000?style=for-the-badge&logo=ollama&logoColor=white)
+![TMDB](https://img.shields.io/badge/TMDB-X--Ray%20cast-01B4E4?style=for-the-badge&logo=themoviedatabase&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-E50914?style=for-the-badge)](LICENSE)
 
 **[🌐 Project website](https://pri-te-sh.github.io/NUCFLIX/)**
@@ -32,6 +33,7 @@ IPTV apps usually look like spreadsheets of channels. NucFlix turns any **Xtream
 - A "Who's watching?" screen with a profile for each person.
 - Continue Watching that follows you from the couch to your phone.
 - A bit of AI where it helps: it **sees** when the end credits really start, spots dead channels, keeps kids profiles kid-safe and understands searches like *"funny hindi movies from the 2010s"*.
+- **X-Ray** on the TV, as on Prime Video: pause and see who's in the scene, who they play, and what else they've been in.
 
 You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 
@@ -61,6 +63,7 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 - The dead-channel check, using frames grabbed from the player
 - Repairs broken MPEG-TS timestamps from some providers, and MKV files missing their H.264 header
 - Plays **DTS and Dolby TrueHD** audio (which Fire TVs can't decode) with a built-in FFmpeg decoder
+- **X-Ray**: who's in the current scene (photo, actor, character), trivia, the full cast, and each actor's bio and other titles (see [Smart features](#-smart-features))
 - Search from your phone with the built-in **phone helper**
 
 </td>
@@ -86,7 +89,9 @@ NucFlix uses two models on [Ollama Cloud](https://ollama.com), always through Fi
 - **[Clef](https://ollama.com/library/clef)**, a decision model that can read images, answers multiple-choice and yes/no questions about video frames and category names.
 - **[Gemma 4](https://ollama.com/library/gemma4)** turns a search written in plain language into catalog filters.
 
-Everything works on both the iPhone and the Fire TV, and every feature falls back to the normal behaviour if the AI is unavailable.
+X-Ray adds [TMDB](https://www.themoviedb.org) for cast data and photos, and an open-source face-recognition model that runs inside the Cloud Function.
+
+Everything except X-Ray works on both the iPhone and the Fire TV, and every feature falls back to the normal behaviour if the AI is unavailable.
 
 | | Feature | What you see |
 | --- | --- | --- |
@@ -123,9 +128,10 @@ flowchart LR
     end
     subgraph FB["🔥 Firebase"]
         C[(Firestore<br/>users/uid)]
-        F[Cloud Functions<br/>frameCheck · classifyCategories · smartSearch]
+        F[Cloud Functions<br/>frameCheck · classifyCategories<br/>kidsTitles · smartSearch · xray]
     end
     O[🦙 Ollama Cloud<br/>Clef + Gemma 4]
+    T[🎬 TMDB<br/>cast & photos]
     P[(Your IPTV provider<br/>Xtream Codes)]
 
     A -- profiles, lines,<br/>approves TV codes --> C
@@ -133,6 +139,7 @@ flowchart LR
     C -- My List &<br/>Continue Watching --> A
     A & B -- frames, category names,<br/>search text --> F
     F -- API key stays here --> O
+    F -- X-Ray: key stays here --> T
     F -- tags & usage --> C
     A -- streams --> P
     B -- streams --> P
@@ -216,6 +223,20 @@ sequenceDiagram
 </details>
 
 <details>
+<summary><b>🎭 X-Ray (Fire TV)</b></summary>
+
+- Pressing **X-Ray** grabs the frame on screen (~768 px JPEG), pauses, and calls the `xray` function with the title's name and year (and the provider's TMDB id when it has one).
+- The function finds the title on [TMDB](https://www.themoviedb.org) and takes its cast. An episode uses that episode's own credits, guest stars included, and falls back to the show's cast.
+- **Who's on screen is found by face matching, not by an AI model.** [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) finds the faces and [SFace](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface) turns each one into a 128-number embedding. Both are OpenCV Zoo models running on the function's CPU with onnxruntime. Each face is compared only with the photos of that title's cast, the first 30 billed actors who have one.
+- A face counts as an actor at a cosine similarity of 0.36 or more, or from 0.25 when it is at least 0.08 ahead of the next actor. Faces that are side-on, tiny or belong to extras are left out rather than given a name.
+- Vision LLMs were tested first and guessed the film's stars instead of who was on screen. On 16 labelled frames from *Charade* (1963, public domain): Gemma 4 got 5 right and Clef about 6, while face matching got all 16. With real TMDB photos against the film's full cast, it named 15 people correctly, none wrongly, and missed 4.
+- Each actor's embedding is worked out once from their TMDB photo, and what was found in each 10-second stretch of a title is saved, so a scene is only analysed once.
+- **Trivia** comes from Gemma 4, reading the title's English Wikipedia article with the plot sections removed so it can't spoil anything.
+- If nobody on screen is recognised, or the frame couldn't be grabbed, the panel says so and shows the full cast.
+
+</details>
+
+<details>
 <summary><b>Firestore data model</b></summary>
 
 ```
@@ -229,6 +250,10 @@ users/{uid}
 ├── markers/{contentKey}        AI: where the credits start (shared by the household)
 └── lineTags/{lineId}           AI: kids, adult, language and genre per category (written by Cloud Functions)
 aiUsage/{uid}                   daily AI call count (Cloud Functions only)
+xrayTitles/{type_id[_sNeM]}     X-Ray: a title's (or episode's) TMDB details and cast (Cloud Functions only, shared)
+xrayFaces/{personId}            X-Ray: an actor's face embedding from their TMDB photo
+xrayScenes/{title}_{n}          X-Ray: who was found in each 10-second stretch of a title
+xrayPeople, xrayTrivia, xrayLookups   X-Ray: actor details, trivia and title-name lookups (30-day cache)
 pairing/{code}                  short-lived TV pairing codes
 ```
 
@@ -350,6 +375,8 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 - [x] Shared household account with people profiles and kids mode
 - [x] TV pairing, synced My List and Continue Watching
 - [x] AI: real end-credits detection, dead-channel check, kid-safe category tags, smart search
+- [x] X-Ray on Fire TV: who's in the scene by face matching, trivia, cast and actor pages
+- [ ] X-Ray on the iPhone, and the music playing in the scene
 - [ ] Skip Intro by matching the opening across episodes (frame fingerprints)
 - [ ] Use AI tags for genre rows on the home screen
 - [ ] "Now playing" hand-off: move what's playing between phone and TV
@@ -365,6 +392,10 @@ Bundled third-party pieces keep their own licenses (the AI models run on Ollama 
 - MobileVLCKit, downloaded by `scripts/fetch-vlckit.sh` (LGPL 2.1).
 - FFmpeg 6.1.2's audio decoders in `NucFlixFireTV/jniLibs/` (LGPL 2.1 or later, built without GPL or non-free parts; `NucFlixFireTV/tools/build-ffmpeg.sh` shows exactly how, and fetches the source).
 - Media3 sources in `NucFlixFireTV/src/androidx/` (Apache 2.0): the FFmpeg audio renderer, and a patched copy of the MKV extractor (changes marked "NucFlix").
+- X-Ray's face models, YuNet and SFace from the [OpenCV Zoo](https://github.com/opencv/opencv_zoo), downloaded by `firebase/functions/fetch-models.sh` (Apache 2.0). They run with onnxruntime (MIT) and sharp (Apache 2.0).
+- The X-Ray test frames in `firebase/test/fixtures/xray/` come from *Charade* (1963), which is in the public domain.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB. Cast data and photos come from [The Movie Database](https://www.themoviedb.org).
 
 ## ⚖️ Disclaimer
 
