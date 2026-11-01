@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -19,6 +20,12 @@ val firebase = (JsonSlurper().parse(file("google-services.json")) as Map<String,
     )
 }
 
+// Release signing from the git-ignored local.properties (nucflix.storeFile / storePassword / keyAlias). Without it,
+// release builds fall back to the debug key (fine for testing, but they can't update a published install).
+val signing = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
 android {
     namespace = "com.pritesh.nucflix.phone"
     compileSdk = 37
@@ -27,11 +34,22 @@ android {
         applicationId = "com.pritesh.nucflix.phone"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.4.0"
+        versionCode = 2
+        versionName = "0.5.0"
         firebase.forEach { (key, value) -> buildConfigField("String", "FIREBASE_$key", "\"$value\"") }
         // -Pnucflix.emulator=true points a build at the local Firebase emulators (testing only).
         buildConfigField("boolean", "FIREBASE_EMULATOR", (project.findProperty("nucflix.emulator") as String?).toBoolean().toString())
+    }
+
+    signingConfigs {
+        signing.getProperty("nucflix.storeFile")?.let { store ->
+            create("release") {
+                storeFile = rootProject.file(store)
+                storePassword = signing.getProperty("nucflix.storePassword")
+                keyAlias = signing.getProperty("nucflix.keyAlias")
+                keyPassword = signing.getProperty("nucflix.storePassword")
+            }
+        }
     }
 
     buildTypes {
@@ -40,8 +58,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key until a release key is set up (sideloading and testing).
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

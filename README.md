@@ -4,11 +4,12 @@
 
 <br>
 
-**A Netflix-style home for your own IPTV subscription, on iPhone and Fire TV, with one account across both.**
+**A Netflix-style home for your own IPTV subscription, on iPhone, Android and Fire TV, with one account across all of them.**
 
 <br>
 
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-000000?style=for-the-badge&logo=apple&logoColor=white)
+![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![Fire TV](https://img.shields.io/badge/Fire%20TV-Android%208%2B-FF9900?style=for-the-badge&logo=amazonfiretv&logoColor=white)
 ![Swift](https://img.shields.io/badge/SwiftUI-F05138?style=for-the-badge&logo=swift&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-DD2C00?style=for-the-badge&logo=firebase&logoColor=white)
@@ -17,7 +18,7 @@
 ![TMDB](https://img.shields.io/badge/TMDB-X--Ray%20cast-01B4E4?style=for-the-badge&logo=themoviedatabase&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-E50914?style=for-the-badge)](LICENSE)
 
-**[🌐 Project website](https://pri-te-sh.github.io/NUCFLIX/)**
+**[🌐 Project website](https://pri-te-sh.github.io/NUCFLIX/)** · **[⬇️ Download for Android](https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk)**
 
 [Features](#-features) · [Smart features](#-smart-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Getting started](#-getting-started) · [Project layout](#-project-layout) · [Privacy](#-privacy--security) · [License](#-license)
 
@@ -72,6 +73,19 @@ You bring the IPTV subscription; NucFlix doesn't provide or host any content.
 <tr>
 <td colspan="2" valign="top">
 
+### 🤖 Android phone
+- A native app (Kotlin, Jetpack Compose) with the same account, people, My List and Continue Watching
+- Live TV with a TV guide, Movies and Series, played by **Media3 ExoPlayer** with the Fire TV app's DTS / TrueHD decoders and stream repairs
+- **Smart Downloads**, **Picture-in-Picture**, screen lock, brightness and pinch to fill
+- **X-Ray**, next episode when the credits start, the dead-channel check and smart search
+- Sign in with **Google** or email
+- **[⬇️ Download the APK](https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk)** (Android 8.0 or later), see [Android phone app](#5-android-phone-app)
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
 ### 🔄 One account, every screen
 - **Profiles are people.** You, your partner, the kids: each person has their own My List, Continue Watching and recommendations.
 - **Kids profiles** only show categories the AI tagged as kid-friendly, and never adult ones.
@@ -92,7 +106,7 @@ NucFlix uses two models on [Ollama Cloud](https://ollama.com), always through Fi
 
 X-Ray adds [TMDB](https://www.themoviedb.org) for cast data and photos, and an open-source face-recognition model that runs inside the Cloud Function.
 
-Everything works on both the iPhone and the Fire TV (X-Ray also in the Android phone app), and every feature falls back to the normal behaviour if the AI is unavailable.
+Everything works on the iPhone, the Android app and the Fire TV, and every feature falls back to the normal behaviour if the AI is unavailable.
 
 | | Feature | What you see |
 | --- | --- | --- |
@@ -326,6 +340,27 @@ cd NucFlixFireTV
 - The first build also creates a signing key. **Back up `keystore.jks` and `local.properties` together.** A build signed with a different key can't update the installed app; it has to be uninstalled first, which unpairs the TV.
 - To point the Fire TV app at your own Firebase project, put that project's web app config in `NucFlixFireTV/web/firebase-config.js`.
 
+### 5. Android phone app
+
+**Install:** download **[NucFlix-Android.apk](https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk)** on the phone (Android 8.0 or later) and open it. Android asks once to allow installs from your browser or Files app. Then sign in with your NucFlix account. Every version is on the [Releases page](https://github.com/pri-te-sh/NUCFLIX/releases), and a newer APK installs over the old one, keeping your sign-in.
+
+**Build from source** (JDK 17 and the Android SDK, compile SDK 37):
+
+```bash
+cd NucFlixAndroid
+./gradlew assembleRelease     # → app/build/outputs/apk/release/app-release.apk (R8-shrunk)
+./gradlew assembleDebug -Pnucflix.emulator=true   # a test build that uses the local Firebase emulators
+```
+
+| Setting | Where |
+| --- | --- |
+| Release signing | `NucFlixAndroid/local.properties` → `nucflix.storeFile=release.jks`, `nucflix.storePassword=`, `nucflix.keyAlias=` |
+| Firebase | `NucFlixAndroid/app/google-services.json` (read by the build, no Google Services plugin) |
+
+- Without the signing settings, release builds are signed with the debug key: fine for testing, but they can't update an APK from the Releases page. **Back up `release.jks` and `local.properties` together**; both stay out of git.
+- With your own Firebase project or signing key, add the key's SHA-1 and SHA-256 to the Android app in Firebase, or Google sign-in won't work.
+- The player shares its FFmpeg decoders, MKV extractor and live-TS repairs with the Fire TV app (`NucFlixFireTV/shared`, `NucFlixFireTV/jniLibs`).
+
 ### 🧪 Developing against the emulators
 
 ```bash
@@ -347,11 +382,13 @@ cd firebase && npx firebase emulators:start --only auth,firestore,functions
 │   ├── Services/             Firebase account & sync, Xtream API, recommendations, SmartAI (AI calls + player checks)
 │   └── Views/                Home, Live TV, Movies, Series, Search, player, account
 ├── NucFlix.xcodeproj
+├── NucFlixAndroid/           Android phone app (Kotlin, Jetpack Compose, Media3 ExoPlayer)
 ├── NucFlixFireTV/            Fire TV app
 │   ├── src/                  Java: activity, ExoPlayer, frame capture, Xtream proxy, phone helper,
 │   │                         patched MKV extractor, Media3 FFmpeg audio renderer
 │   ├── jniLibs/              FFmpeg audio decoders (DTS, TrueHD, AC-3, MP2) for ARM, built by tools/build-ffmpeg.sh
 │   ├── web/                  10-foot UI (HTML/CSS/JS), Firebase sync (cloud.js), AI helpers (smart.js)
+│   ├── shared/               player code also compiled into the Android phone app
 │   └── build.sh              Gradle-less build
 ├── firebase/                 Firestore rules, emulator tests, deploy scripts
 │   └── functions/            AI Cloud Functions (Ollama Clef + Gemma 4), X-Ray (TMDB + face matching) and their mocks

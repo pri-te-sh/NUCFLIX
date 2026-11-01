@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NUCFLIX: your IPTV, the streaming-app way</title>
-<meta name="description" content="NUCFLIX turns an Xtream Codes IPTV subscription into a polished streaming experience on iPhone and Fire TV, with one household account, synced profiles and on-device smarts.">
+<meta name="description" content="NUCFLIX turns an Xtream Codes IPTV subscription into a polished streaming experience on iPhone, Android and Fire TV, with one household account, synced profiles and on-device smarts.">
 <meta name="theme-color" content="#0b0b0c">
 <meta property="og:title" content="NUCFLIX">
-<meta property="og:description" content="Your IPTV, the streaming-app way. On iPhone and Fire TV, with one account across both.">
+<meta property="og:description" content="Your IPTV, the streaming-app way. On iPhone, Android and Fire TV, with one account across all of them.">
 <meta property="og:image" content="images/hero.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0b0c'/%3E%3Cpath d='M18 12h9l10 26V12h9v40h-9L27 26v26h-9z' fill='%23e50914'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -188,6 +188,9 @@
   .platform-head .icon { width: 52px; height: 52px; border-radius: 14px; }
   .platform-head h3 { margin: 0; font-size: 22px; }
   .platform-head p { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
+  .platform-dl { margin-top: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+  .platform-dl span { font-size: 13px; color: var(--text-3); }
+  .platform-dl span a { color: var(--text-2); text-decoration: underline; }
   .checks { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 12px; }
   .checks li { display: grid; grid-template-columns: 20px 1fr; gap: 12px; color: var(--text-2); font-size: 15px; }
   .checks li::before {
@@ -379,15 +382,18 @@
       <div class="hero-copy">
         <span class="pill"><b>NEW</b> X-Ray: see who's in the scene, on TV and phone</span>
         <h1>Your IPTV,<br>the <span class="accent">streaming-app</span> way.</h1>
-        <p class="lede">NUCFLIX turns any Xtream Codes subscription into a cinematic experience on iPhone and Fire TV. Big artwork, a profile for everyone, and Continue Watching that follows you from the couch to your phone.</p>
+        <p class="lede">NUCFLIX turns any Xtream Codes subscription into a cinematic experience on iPhone, Android and Fire TV. Big artwork, a profile for everyone, and Continue Watching that follows you from the couch to your phone.</p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX">
+          <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+            Download for Android
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/pri-te-sh/NUCFLIX">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
             View the source
           </a>
-          <a class="btn btn-ghost" href="#how">See how it works</a>
         </div>
-        <p class="hero-meta">iOS 17+ &nbsp;·&nbsp; Fire TV (Android 8+) &nbsp;·&nbsp; MIT licensed &nbsp;·&nbsp; Bring your own IPTV line</p>
+        <p class="hero-meta">iOS 17+ &nbsp;·&nbsp; Android 8+ &nbsp;·&nbsp; Fire TV &nbsp;·&nbsp; MIT licensed &nbsp;·&nbsp; Bring your own IPTV line</p>
       </div>
 
       <div class="stage reveal" aria-hidden="true">
@@ -401,7 +407,7 @@
   <!-- ===================== STATS ===================== -->
   <section class="stats" aria-label="At a glance">
     <div class="wrap">
-      <div class="stat"><strong>2</strong><span>native apps, iPhone &amp; Fire TV</span></div>
+      <div class="stat"><strong>3</strong><span>native apps: iPhone, Android &amp; Fire TV</span></div>
       <div class="stat"><strong>1</strong><span>household account across both</span></div>
       <div class="stat"><strong>5</strong><span>smart features, incl. X-Ray</span></div>
       <div class="stat"><strong>0</strong><span>provider logins saved on devices</span></div>
@@ -412,12 +418,12 @@
   <section id="apps">
     <div class="wrap">
       <div class="section-head center reveal">
-        <span class="eyebrow">Two apps, one experience</span>
+        <span class="eyebrow">Three apps, one experience</span>
         <h2>Built natively for every screen in your home.</h2>
-        <p class="lede">A SwiftUI app for your pocket and a 10-foot app for your TV, sharing the same people, lists and progress.</p>
+        <p class="lede">Native apps for iPhone and Android, and a 10-foot app for your TV, sharing the same people, lists and progress.</p>
       </div>
 
-      <div class="grid grid-2">
+      <div class="grid grid-3">
         <article class="card platform reveal">
           <div class="platform-head">
             <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10.5 18.5h3"/></svg></div>
@@ -431,6 +437,24 @@
             <li><span><b>X-Ray</b> in the player: who's in the scene, trivia and the cast</span></li>
             <li><span><b>Account hub:</b> Google or email sign-in, people, kids profiles, lines and TV pairing</span></li>
           </ul>
+        </article>
+
+        <article class="card platform reveal">
+          <div class="platform-head">
+            <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M7.5 10a4.5 4.5 0 0 1 9 0M9 6.2 7.6 4.3M15 6.2l1.4-1.9"/><path d="M9.5 14h.01M14.5 14h.01"/></svg></div>
+            <div><h3>Android</h3><p>Jetpack Compose · Media3 ExoPlayer · FFmpeg</p></div>
+          </div>
+          <ul class="checks">
+            <li><span><b>Live TV, Movies and Series</b> with the TV guide</span></li>
+            <li><span><b>Smart Downloads</b> and Picture-in-Picture</span></li>
+            <li><span><b>DTS and TrueHD audio</b> and the TV app's stream repairs</span></li>
+            <li><span><b>X-Ray</b>, credits detection and smart search</span></li>
+            <li><span><b>Google or email sign-in</b>, the same household account</span></li>
+          </ul>
+          <div class="platform-dl">
+            <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg> Download the APK</a>
+            <span>Android 8.0 or later · <a href="https://github.com/pri-te-sh/NUCFLIX/releases">all versions</a></span>
+          </div>
         </article>
 
         <article class="card platform reveal">
@@ -761,7 +785,8 @@
         <span class="wordmark">NUCFLIX</span>
         <p>Made for the couch. Released under the MIT license.</p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX">Explore the repository</a>
+          <a class="btn btn-primary" href="https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg> Download for Android</a>
+          <a class="btn btn-ghost" href="https://github.com/pri-te-sh/NUCFLIX">Explore the repository</a>
           <a class="btn btn-ghost" href="https://github.com/pri-te-sh/NUCFLIX#readme">Read the docs</a>
         </div>
       </div>
@@ -775,6 +800,7 @@
       <span class="wordmark">NUCFLIX</span>
       <nav class="links" aria-label="Footer">
         <a href="https://github.com/pri-te-sh/NUCFLIX">GitHub</a>
+        <a href="https://github.com/pri-te-sh/NUCFLIX/releases/latest/download/NucFlix-Android.apk">Android app</a>
         <a href="https://github.com/pri-te-sh/NUCFLIX/blob/main/LICENSE">License</a>
         <a href="#privacy">Privacy</a>
       </nav>
