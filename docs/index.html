@@ -241,6 +241,24 @@
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   .chips span { padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--text-2); font-size: 13px; }
 
+  .card.feature-full { grid-column: 1 / -1; }
+  .xray-demo {
+    background: linear-gradient(90deg, #0b0b0d 55%, #16161a); border: 1px solid var(--line-strong); border-radius: 14px;
+    padding: 18px 20px; font-size: 14px; display: grid; gap: 10px;
+  }
+  .xr-badge { display: flex; align-items: center; gap: 8px; color: #1ec8ff; font: 800 11px/1 var(--font); letter-spacing: .12em; text-transform: uppercase; }
+  .xr-badge svg { width: 18px; height: 18px; }
+  .xr-title { font: 800 20px/1.2 var(--font); color: var(--text); }
+  .xr-title small { font: 500 13px var(--font); color: var(--text-3); margin-left: 6px; }
+  .xr-label { margin-top: 4px; font: 700 13px/1 var(--font); color: var(--text-2); }
+  .xr-person { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 10px; background: rgba(255,255,255,0.05); }
+  .xr-person.on { background: #fff; color: #000; }
+  .xr-person b { display: block; font-size: 15px; }
+  .xr-person small { color: var(--text-3); font-size: 13px; }
+  .xr-person.on small { color: rgba(0,0,0,.6); }
+  .xr-face { width: 38px; height: 50px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0; background: linear-gradient(135deg, #3a3a3a, #1b1b1b); color: rgba(255,255,255,.6); font: 800 14px/1 var(--font); }
+  .xr-fact { border-left: 3px solid #1ec8ff; padding: 8px 12px; border-radius: 0 8px 8px 0; background: rgba(255,255,255,0.05); color: var(--text-2); font-size: 13px; }
+
   /* ---------- playback ---------- */
   .pb-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .pb { background: var(--bg-raised); padding: 26px 28px; }
@@ -321,7 +339,7 @@
   }
   @media (max-width: 760px) {
     .grid-2, .grid-3, .split, .pb-list, .flow { grid-template-columns: 1fr; }
-    .card.feature-wide { grid-column: auto; grid-template-columns: 1fr; }
+    .card.feature-wide, .card.feature-full { grid-column: auto; grid-template-columns: 1fr; }
     .stats .wrap { grid-template-columns: repeat(2, 1fr); }
     .stat:nth-child(3) { border-left: 0; }
     .stat:nth-child(n+3) { border-top: 1px solid var(--line); }
@@ -359,7 +377,7 @@
   <section class="hero">
     <div class="wrap">
       <div class="hero-copy">
-        <span class="pill"><b>NEW</b> AI end-credit detection, dead-channel check and smart search</span>
+        <span class="pill"><b>NEW</b> X-Ray on Fire TV: see who's in the scene</span>
         <h1>Your IPTV,<br>the <span class="accent">streaming-app</span> way.</h1>
         <p class="lede">NUCFLIX turns any Xtream Codes subscription into a cinematic experience on iPhone and Fire TV. Big artwork, a profile for everyone, and Continue Watching that follows you from the couch to your phone.</p>
         <div class="hero-cta">
@@ -385,7 +403,7 @@
     <div class="wrap">
       <div class="stat"><strong>2</strong><span>native apps, iPhone &amp; Fire TV</span></div>
       <div class="stat"><strong>1</strong><span>household account across both</span></div>
-      <div class="stat"><strong>4</strong><span>AI features, on Ollama Cloud</span></div>
+      <div class="stat"><strong>5</strong><span>smart features, incl. X-Ray</span></div>
       <div class="stat"><strong>0</strong><span>provider logins saved on devices</span></div>
     </div>
   </section>
@@ -424,6 +442,7 @@
             <li><span><b>Native ExoPlayer playback</b> with timeline scrubbing and thumbnail previews</span></li>
             <li><span><b>DTS and Dolby TrueHD audio</b> through a built-in LGPL FFmpeg decoder</span></li>
             <li><span><b>Self-healing streams:</b> repairs broken MPEG-TS clocks and MKV headers</span></li>
+            <li><span><b>X-Ray:</b> who's in the scene, who they play, trivia and the full cast</span></li>
             <li><span><b>Search from your phone</b> with the built-in phone helper</span></li>
           </ul>
         </article>
@@ -458,6 +477,7 @@
         <div class="model-row">
           <span class="model"><b>Clef</b> decision model that reads video frames</span>
           <span class="model"><b>Gemma 4</b> understands search in plain language</span>
+          <span class="model"><b>YuNet + SFace</b> face matching for X-Ray, with TMDB cast data</span>
         </div>
       </div>
 
@@ -499,6 +519,24 @@
             <div class="chips"><span>kind: movies</span><span>genre: comedy</span><span>language: Hindi</span><span>years: 2010–2019</span></div>
           </div>
         </article>
+        <article class="card feature-wide feature-full reveal">
+          <div>
+            <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9.5" r="3"/><path d="M6.5 18.5c1-3 3-4.5 5.5-4.5s4.5 1.5 5.5 4.5M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4"/></svg></div>
+            <h3>X-Ray <small style="color:var(--text-3);font-weight:600">· Fire TV</small></h3>
+            <p>Press X-Ray in the player and NUCFLIX pauses to show who's in the scene, who they play, a little trivia and the full cast. Pick anyone for their bio and other titles.</p>
+            <p>People are found by <b>face matching</b> against the title's cast photos from TMDB, not by asking an AI who they are. On labelled frames from <em>Charade</em> (1963), the vision models named the film's stars instead (5–6 of 16 right), while face matching got all 16. When it can't recognise anyone, it simply shows the full cast.</p>
+            <span class="tag">Face matching · TMDB</span> <span class="tag">Trivia · Gemma 4</span>
+          </div>
+          <div class="xray-demo" aria-hidden="true">
+            <div class="xr-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="9.5" r="3"/><path d="M6.5 18.5c1-3 3-4.5 5.5-4.5s4.5 1.5 5.5 4.5M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4"/></svg>X-Ray</div>
+            <div class="xr-title">Charade <small>at 1:09:03</small></div>
+            <div class="xr-label">In this scene</div>
+            <div class="xr-person on"><span class="xr-face">AH</span><div><b>Audrey Hepburn</b><small>Regina Lampert</small></div></div>
+            <div class="xr-person"><span class="xr-face">CG</span><div><b>Cary Grant</b><small>Peter Joshua</small></div></div>
+            <div class="xr-label">Trivia</div>
+            <div class="xr-fact">Behind-the-scenes facts drawn from the title's Wikipedia article, never the plot.</div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
@@ -531,7 +569,7 @@
         <p class="lede">The apps sync through Firestore and call Cloud Functions for AI. Video always streams straight from your IPTV provider to the device.</p>
       </div>
 
-      <div class="diagram reveal" role="img" aria-label="Architecture: the iPhone app and Fire TV app sync through Firebase (Auth, Firestore, Cloud Functions). Cloud Functions call Ollama Cloud. Both apps stream directly from the IPTV provider.">
+      <div class="diagram reveal" role="img" aria-label="Architecture: the iPhone app and Fire TV app sync through Firebase (Auth, Firestore, Cloud Functions). Cloud Functions call Ollama Cloud and TMDB. Both apps stream directly from the IPTV provider.">
         <svg viewBox="0 -24 1000 464" xmlns="http://www.w3.org/2000/svg" font-family="Inter, system-ui, sans-serif">
           <defs>
             <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7d7d86"/></marker>
@@ -566,7 +604,7 @@
             <text x="510" y="256" text-anchor="middle" fill="#7d7d86" font-size="13">progress · markers · tags</text>
             <rect x="405" y="292" width="210" height="88" rx="12" fill="#17171a" stroke="rgba(255,255,255,.1)"/>
             <text x="510" y="324" text-anchor="middle" fill="#f4f4f5" font-size="16" font-weight="600">Cloud Functions</text>
-            <text x="510" y="346" text-anchor="middle" fill="#7d7d86" font-size="13">frameCheck · classify</text>
+            <text x="510" y="346" text-anchor="middle" fill="#7d7d86" font-size="13">frameCheck · classify · xray</text>
             <text x="510" y="364" text-anchor="middle" fill="#7d7d86" font-size="13">smartSearch · daily limits</text>
           </g>
 
@@ -575,6 +613,11 @@
             <rect x="770" y="292" width="210" height="88" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
             <text x="875" y="328" text-anchor="middle" fill="#f4f4f5" font-size="18" font-weight="700">Ollama Cloud</text>
             <text x="875" y="352" text-anchor="middle" fill="#7d7d86" font-size="13">Clef · Gemma 4</text>
+          </g>
+          <g>
+            <rect x="770" y="198" width="210" height="70" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
+            <text x="875" y="228" text-anchor="middle" fill="#f4f4f5" font-size="18" font-weight="700">TMDB</text>
+            <text x="875" y="250" text-anchor="middle" fill="#7d7d86" font-size="13">X-Ray cast &amp; photos</text>
           </g>
           <g>
             <rect x="770" y="60" width="210" height="110" rx="16" fill="#17171a" stroke="rgba(255,255,255,.14)"/>
@@ -589,7 +632,8 @@
           <text x="300" y="104" fill="#b4b4bb" font-size="13" transform="rotate(10 300 104)">sync live</text>
           <text x="292" y="262" fill="#b4b4bb" font-size="13" transform="rotate(-27 292 262)">sync live</text>
           <path d="M617 336 L766 336" stroke="#7d7d86" stroke-width="2" fill="none" marker-end="url(#ar)"/>
-          <text x="690" y="324" text-anchor="middle" fill="#b4b4bb" font-size="13">API key stays here</text>
+          <text x="690" y="324" text-anchor="middle" fill="#b4b4bb" font-size="13">API keys stay here</text>
+          <path d="M617 310 L766 240" stroke="#7d7d86" stroke-width="2" fill="none" marker-end="url(#ar)"/>
 
           <!-- streams -->
           <!-- streams: one bus above everything, straight between each device and the provider -->
@@ -631,7 +675,7 @@
         <article class="card reveal">
           <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg></div>
           <h3>AI that sees only what it needs</h3>
-          <p>Small frames, category names and search text. Never your login, profiles or history, and frames are never stored.</p>
+          <p>Small frames, category names and search text. Never your login, profiles or history, and frames are never stored. X-Ray compares a frame's faces with the title's cast photos and keeps only who was found.</p>
         </article>
       </div>
     </div>
@@ -654,6 +698,8 @@
         <span><b>Firebase</b> Auth · Firestore</span>
         <span><b>Cloud Functions</b> · Node 22</span>
         <span><b>Ollama Cloud</b> Clef · Gemma 4</span>
+        <span><b>onnxruntime</b> YuNet · SFace</span>
+        <span><b>TMDB</b> cast data</span>
         <span><b>R8</b> · Gradle-less build</span>
       </div>
     </div>
@@ -732,7 +778,7 @@
         <a href="#privacy">Privacy</a>
       </nav>
     </div>
-    <p style="margin:0">NUCFLIX is a player. It doesn't include, host or sell any channels or content; use it only with IPTV services you're entitled to. It isn't affiliated with or endorsed by Netflix, Amazon, Apple or Google, and all trademarks belong to their owners. © 2026 pri-te-sh · MIT License.</p>
+    <p style="margin:0">NUCFLIX is a player. It doesn't include, host or sell any channels or content; use it only with IPTV services you're entitled to. It isn't affiliated with or endorsed by Netflix, Amazon, Apple or Google, and all trademarks belong to their owners. This product uses the TMDB API but is not endorsed or certified by TMDB. © 2026 pri-te-sh · MIT License.</p>
   </div>
 </footer>
 
