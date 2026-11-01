@@ -34,8 +34,8 @@ android {
         applicationId = "com.pritesh.nucflix.phone"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.5.0"
+        versionCode = 3
+        versionName = "0.6.0"
         firebase.forEach { (key, value) -> buildConfigField("String", "FIREBASE_$key", "\"$value\"") }
         // -Pnucflix.emulator=true points a build at the local Firebase emulators (testing only).
         buildConfigField("boolean", "FIREBASE_EMULATOR", (project.findProperty("nucflix.emulator") as String?).toBoolean().toString())
