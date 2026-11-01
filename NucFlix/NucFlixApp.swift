@@ -28,6 +28,13 @@ struct NucFlixApp: App {
                         cloud.scannedPairCode = code.isEmpty ? nil : code
                         return
                     }
+                    // nucflix://signin?code=K7Q2M9XD — another phone's "sign in with another device" QR code.
+                    if url.scheme == "nucflix", url.host == "signin" {
+                        let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                            .queryItems?.first { $0.name == "code" }?.value ?? ""
+                        cloud.scannedSignInCode = code.isEmpty ? nil : code
+                        return
+                    }
                     GIDSignIn.sharedInstance.handle(url)
                 }
         }

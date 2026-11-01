@@ -3,7 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { deleteApp, initializeApp } from 'firebase/app';
-import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, signInAnonymously } from 'firebase/auth';
+import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
 import { connectFirestoreEmulator, doc, getDoc, getFirestore, serverTimestamp, setDoc } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { startFakeTmdb } from './fake-tmdb.js';
@@ -208,5 +208,60 @@ describe('xray', () => {
     await rejects(tvStranger.call('xray', { kind: 'movie', title: 'Charade', position: 1 }), 'permission-denied');
     await rejects(signedOut.call('xray', { kind: 'movie', title: 'Charade', position: 1 }), 'unauthenticated');
     await rejects(owner.call('xray', { kind: 'episode', title: 'The Paris Files', position: 1 }), 'invalid-argument');
+  });
+});
+
+describe('deviceSignIn', () => {
+  const ask = (c, action, extra = {}) => c.call('deviceSignIn', { action, ...extra });
+  let phone, other;
+  before(async () => {
+    phone = client('newPhone');
+    other = client('otherPhone');
+    await signInAnonymously(phone.auth);
+    await signInAnonymously(other.auth);
+  });
+  after(() => Promise.all([phone, other].map(c => deleteApp(c.app))));
+
+  it('signs a new phone in to the account that approves its code', async () => {
+    const anonUid = phone.auth.currentUser.uid;
+    const { code, expiresAt } = await ask(phone, 'start', { name: 'Pixel 9', platform: 'android' });
+    assert.match(code, /^[A-HJ-NP-Z2-9]{8}$/);
+    assert.ok(expiresAt > Date.now() + 9 * 60_000);
+    // Only the waiting phone can see its code, and it can't be redeemed before the approval.
+    assert.equal((await getDoc(doc(phone.db, `deviceSignIn/${code}`))).data().status, 'pending');
+    await assert.rejects(getDoc(doc(other.db, `deviceSignIn/${code}`)));
+    await rejects(ask(phone, 'redeem', { code }), 'failed-precondition');
+
+    assert.deepEqual(await ask(owner, 'lookup', { code: code.toLowerCase() }), { device: { name: 'Pixel 9', platform: 'android' } });
+    assert.deepEqual(await ask(owner, 'approve', { code }), { device: { name: 'Pixel 9', platform: 'android' } });
+    assert.equal((await getDoc(doc(phone.db, `deviceSignIn/${code}`))).data().status, 'approved');
+    await rejects(ask(other, 'redeem', { code }), 'not-found');
+
+    const { token } = await ask(phone, 'redeem', { code });
+    const user = (await signInWithCustomToken(phone.auth, token)).user;
+    assert.equal(user.uid, ownerUid);
+    assert.notEqual(user.uid, anonUid);
+    // Single use.
+    await rejects(ask(owner, 'approve', { code }), 'not-found');
+  });
+
+  it('gives each device one live code', async () => {
+    const first = await ask(other, 'start', { name: 'iPhone', platform: 'ios' });
+    const second = await ask(other, 'start', { name: 'iPhone', platform: 'ios' });
+    assert.notEqual(first.code, second.code);
+    await rejects(ask(owner, 'lookup', { code: first.code }), 'not-found');
+    assert.equal((await ask(owner, 'lookup', { code: second.code })).device.name, 'iPhone');
+  });
+
+  it('keeps each side to its own steps', async () => {
+    const { code } = await ask(other, 'start', { name: 'iPhone', platform: 'ios' });
+    await rejects(ask(owner, 'start', {}), 'permission-denied');
+    await rejects(ask(other, 'approve', { code }), 'permission-denied');
+    await rejects(ask(tvPaired, 'approve', { code }), 'permission-denied');
+    await rejects(ask(owner, 'redeem', { code }), 'permission-denied');
+    await rejects(ask(signedOut, 'start', {}), 'unauthenticated');
+    await rejects(ask(owner, 'lookup', { code: 'O0I1' }), 'invalid-argument');
+    await rejects(ask(owner, 'lookup', { code: 'ZZZZZZZZ' }), 'not-found');
+    await rejects(ask(owner, 'nonsense', {}), 'invalid-argument');
   });
 });

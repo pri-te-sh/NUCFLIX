@@ -79,6 +79,15 @@ struct RootView: View {
         } message: {
             Text("The TV showing code \(cloud.scannedPairCode ?? "") will get your profiles, IPTV lines, My List and Continue Watching.")
         }
+        // Another phone's "sign in with another device" QR code (nucflix://signin?code=...): shows which device it
+        // is before anything is approved.
+        .sheet(isPresented: Binding(
+            get: { cloud.scannedSignInCode != nil && cloud.phase == .signedIn && !showSplash },
+            set: { if !$0 { cloud.scannedSignInCode = nil } }
+        )) {
+            ApproveDeviceView(initialCode: cloud.scannedSignInCode)
+                .environment(cloud)
+        }
         .alert("Pair a TV", isPresented: Binding(get: { pairResult != nil }, set: { if !$0 { pairResult = nil } })) {
             Button("OK", role: .cancel) { pairResult = nil }
         } message: {

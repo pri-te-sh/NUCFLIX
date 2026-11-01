@@ -823,6 +823,7 @@ struct AccountView: View {
     @Environment(CloudAccount.self) var cloud
     @State private var showLines = false
     @State private var showPairTV = false
+    @State private var showApproveDevice = false
     private var downloadManager = DownloadManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var showAdultConfirmation = false
@@ -1360,12 +1361,30 @@ struct AccountView: View {
 
                                 rowDivider
 
+                                Button {
+                                    showApproveDevice = true
+                                } label: {
+                                    netflixSettingMenuRow(
+                                        icon: "qrcode",
+                                        title: "Sign in another device",
+                                        subtitle: "Approve the code a phone or tablet shows",
+                                        value: ""
+                                    )
+                                }
+                                .buttonStyle(.plain)
+
+                                rowDivider
+
                                 netflixInfoRow(label: "Signed in as", value: cloud.email ?? cloud.displayName ?? "—")
                             }
                             .background(netflixSurfaceGray, in: RoundedRectangle(cornerRadius: 8))
                         }
                         .sheet(isPresented: $showPairTV) {
                             PairTVView()
+                                .environment(cloud)
+                        }
+                        .sheet(isPresented: $showApproveDevice) {
+                            ApproveDeviceView()
                                 .environment(cloud)
                         }
                         .sheet(isPresented: $showLines) {

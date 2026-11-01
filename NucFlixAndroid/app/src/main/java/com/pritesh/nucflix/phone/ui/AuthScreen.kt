@@ -1,6 +1,7 @@
 package com.pritesh.nucflix.phone.ui
 
 import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -14,9 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -50,6 +54,13 @@ fun AuthScreen(cloud: CloudAccount) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var notice by remember { mutableStateOf<String?>(null) }
+    var withAnotherDevice by remember { mutableStateOf(false) }
+
+    if (withAnotherDevice) {
+        BackHandler { withAnotherDevice = false }
+        DeviceSignInScreen { withAnotherDevice = false }
+        return
+    }
 
     Column(
         Modifier
@@ -100,6 +111,14 @@ fun AuthScreen(cloud: CloudAccount) {
             enabled = !cloud.busy,
             modifier = Modifier.fillMaxWidth().height(50.dp)
         ) { Text("Continue with Google") }
+        OutlinedButton(
+            onClick = { notice = null; cloud.error = null; withAnotherDevice = true },
+            enabled = !cloud.busy,
+            modifier = Modifier.fillMaxWidth().height(50.dp)
+        ) {
+            Icon(Icons.Filled.QrCode, null, Modifier.size(20.dp))
+            Text("  Sign in with another device")
+        }
         TextButton(onClick = { creating = !creating; cloud.error = null; notice = null }) {
             Text(if (creating) "Already have an account? Sign in" else "New to NucFlix? Create an account", color = androidx.compose.ui.graphics.Color.White)
         }

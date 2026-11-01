@@ -45,6 +45,7 @@
 		B10000250000000000000000 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000050000000000000000 /* FirebaseFunctions */; };
 		B10000240000000000000000 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000040000000000000000 /* GoogleSignIn */; };
 		B10000060000000000000000 /* PairTVView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000060000000000000000 /* PairTVView.swift */; };
+		D10000010000000000000000 /* DeviceSignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000010000000000000000 /* DeviceSignInView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -96,6 +97,7 @@
 		B20000050000000000000000 /* LinesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinesView.swift; sourceTree = "<group>"; };
 		B20000100000000000000000 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		B20000060000000000000000 /* PairTVView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairTVView.swift; sourceTree = "<group>"; };
+		D20000010000000000000000 /* DeviceSignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSignInView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -176,6 +178,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000060000000000000000 /* PairTVView.swift */,
+				D20000010000000000000000 /* DeviceSignInView.swift */,
 				B20000050000000000000000 /* LinesView.swift */,
 				B20000040000000000000000 /* ProfilePickerView.swift */,
 				B20000030000000000000000 /* CloudAuthView.swift */,
@@ -288,6 +291,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B10000060000000000000000 /* PairTVView.swift in Sources */,
+				D10000010000000000000000 /* DeviceSignInView.swift in Sources */,
 				B10000050000000000000000 /* LinesView.swift in Sources */,
 				B10000040000000000000000 /* ProfilePickerView.swift in Sources */,
 				B10000030000000000000000 /* CloudAuthView.swift in Sources */,

@@ -14,6 +14,7 @@ rules_version = '2';
 //   kidsTitles/{lineId}                AI kids-suitability score per title, for kids profiles; written by Cloud Functions
 // aiUsage/{uid}                        daily AI call counters (Cloud Functions only)
 // pairing/{code}                       short-lived TV pairing codes (TV creates, phone approves)
+// deviceSignIn/{code}                  short-lived "sign in with another device" codes (deviceSignIn function only)
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -177,6 +178,15 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/members/$(resource.data.tvUid));
       allow delete: if signedIn()
         && (request.auth.uid == resource.data.tvUid || request.auth.uid == resource.data.get('ownerUid', ''));
+    }
+
+    // ---------------------------------------------------------------- sign in with another device
+    // The deviceSignIn Cloud Function creates, approves and deletes these. The waiting phone (anonymous) may
+    // read its own code's document to see the approval; nothing else can read or write them.
+
+    match /deviceSignIn/{code} {
+      allow get: if signedIn() && resource.data.deviceUid == request.auth.uid;
+      allow list, write: if false;
     }
 
     // ---------------------------------------------------------------- document shapes

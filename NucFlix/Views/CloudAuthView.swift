@@ -9,6 +9,7 @@ struct CloudAuthView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var resetSent = false
+    @State private var showDeviceSignIn = false
     @FocusState private var focused: Field?
 
     private enum Field: Hashable { case name, email, password }
@@ -48,6 +49,24 @@ struct CloudAuthView: View {
                         .padding(.vertical, 15)
                         .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .foregroundStyle(.black)
+                    }
+                    .disabled(cloud.isBusy)
+
+                    Button {
+                        cloud.authError = nil
+                        showDeviceSignIn = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "qrcode")
+                                .font(.title3)
+                            Text("Sign in with another device")
+                                .font(.headline.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 1))
+                        .foregroundStyle(.white)
                     }
                     .disabled(cloud.isBusy)
 
@@ -118,6 +137,7 @@ struct CloudAuthView: View {
                 .padding(.bottom, 32)
             }
         }
+        .sheet(isPresented: $showDeviceSignIn) { DeviceSignInView() }
     }
 
     private func submit() {

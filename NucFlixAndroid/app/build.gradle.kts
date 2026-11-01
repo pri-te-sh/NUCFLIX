@@ -110,5 +110,6 @@ dependencies {
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.1")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    implementation("com.google.zxing:core:3.5.3") // draws the "sign in with another device" QR code
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
 }

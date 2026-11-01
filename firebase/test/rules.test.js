@@ -317,3 +317,17 @@ describe('AI markers and category tags', () => {
     await assertFails(setDoc(doc(phone(), 'aiUsage/owner'), { day: '2026-10-28', calls: 0 }));
   });
 });
+
+describe('sign in with another device', () => {
+  it('only the waiting device reads its code, and nobody writes one', async () => {
+    await seed(db => setDoc(doc(db, 'deviceSignIn/K7Q2M9XD'), { deviceUid: 'newPhone', name: 'Pixel', status: 'pending', expiresAt: minutes(10) }));
+    await assertSucceeds(getDoc(doc(tv('newPhone'), 'deviceSignIn/K7Q2M9XD')));
+    await assertFails(getDoc(doc(tv('someoneElse'), 'deviceSignIn/K7Q2M9XD')));
+    await assertFails(getDoc(doc(phone(), 'deviceSignIn/K7Q2M9XD')));
+    await assertFails(getDoc(doc(nobody(), 'deviceSignIn/K7Q2M9XD')));
+    await assertFails(getDocs(collection(tv('newPhone'), 'deviceSignIn')));
+    await assertFails(setDoc(doc(tv('newPhone'), 'deviceSignIn/ABCDEFGH'), { deviceUid: 'newPhone', status: 'pending' }));
+    await assertFails(updateDoc(doc(phone(), 'deviceSignIn/K7Q2M9XD'), { status: 'approved', ownerUid: 'owner' }));
+    await assertFails(deleteDoc(doc(tv('newPhone'), 'deviceSignIn/K7Q2M9XD')));
+  });
+});

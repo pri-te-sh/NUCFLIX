@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.pritesh.nucflix.phone.data.CloudAccount
 import com.pritesh.nucflix.phone.data.Library
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +68,14 @@ fun Root(cloud: CloudAccount, library: Library) {
         }
     }
     ScannedPairPrompt(cloud)
+    // Another phone's "sign in with another device" QR code (nucflix://signin?code=...): shows which device it is
+    // before anything is approved.
+    val signInCode = cloud.scannedSignInCode
+    if (signInCode != null && cloud.phase == CloudAccount.Phase.SIGNED_IN) {
+        Dialog({ cloud.scannedSignInCode = null }, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            ApproveDeviceScreen(cloud, signInCode) { cloud.scannedSignInCode = null }
+        }
+    }
 }
 
 @Composable

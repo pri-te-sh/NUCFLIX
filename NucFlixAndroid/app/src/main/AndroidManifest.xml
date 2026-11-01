@@ -34,6 +34,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="nucflix" android:host="pair" />
             </intent-filter>
+            <!-- nucflix://signin?code=K7Q2M9XD — another phone's "sign in with another device" QR code. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nucflix" android:host="signin" />
+            </intent-filter>
         </activity>
 
         <activity

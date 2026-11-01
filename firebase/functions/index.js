@@ -5,6 +5,8 @@
 // Callers: the household owner's phone (Google/email account) or a paired TV (anonymous; passes ownerUid,
 // and must be in users/{ownerUid}/members). Every call counts against a per-household daily limit.
 //
+// Also deviceSignIn: signing a phone in with another phone that is already signed in (see the end of the file).
+//
 // Local emulator: put OLLAMA_API_KEY=mock in functions/.secret.local to get deterministic fake answers
 // (see mock.js) instead of calling Ollama.
 
@@ -12,8 +14,9 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { createHash } from 'node:crypto';
+import { getAuth } from 'firebase-admin/auth';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { createHash, randomInt } from 'node:crypto';
 import { mockChat, mockDecision } from './mock.js';
 
 initializeApp();
@@ -642,3 +645,120 @@ export const xray = onCall(xrayOptions, async request => {
   if (d.action === 'trivia') return xrayTrivia(owner, d);
   return xrayScene(owner, d);
 });
+
+// ---------------------------------------------------------------- sign in with another device
+
+const SIGN_IN_CODE = /^[A-HJ-NP-Z2-9]{8}$/; // like TV pairing codes: no 0/O or 1/I to mix up
+const SIGN_IN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const SIGN_IN_FOR = 10 * 60 * 1000;
+const signInOptions = { region: 'us-central1', memory: '256MiB', timeoutSeconds: 30, maxInstances: 5 };
+
+/**
+ * Sign in with another device. A signed-out phone signs in anonymously and asks for a code ('start'), which it
+ * shows as text and a QR code. On a phone that's already signed in, the account holder enters or scans it:
+ * 'lookup' names the waiting device, 'approve' lets it in. The new phone watches deviceSignIn/{code} (the rules
+ * let only it read the document) and, once approved, swaps the code for a custom sign-in token for the account
+ * ('redeem'). The token only ever travels in that last reply; codes are single-use and last 10 minutes.
+ */
+export const deviceSignIn = onCall(signInOptions, async request => {
+  const auth = request.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'Sign in to NucFlix first.');
+  const anonymous = auth.token.firebase?.sign_in_provider === 'anonymous';
+  const d = request.data || {};
+  const wrongSide = () => new HttpsError('permission-denied',
+    anonymous ? 'Approve sign-ins from a phone that is signed in to NucFlix.' : 'This device is already signed in.');
+  switch (d.action) {
+    case 'start':
+      if (!anonymous) throw wrongSide();
+      return startSignIn(auth.uid, d);
+    case 'lookup':
+      if (anonymous) throw wrongSide();
+      return { device: deviceOf(await waitingSignIn(d.code)) };
+    case 'approve':
+      if (anonymous) throw wrongSide();
+      return approveSignIn(auth, d.code);
+    case 'redeem':
+      if (!anonymous) throw wrongSide();
+      return redeemSignIn(auth.uid, d.code);
+    default:
+      throw new HttpsError('invalid-argument', 'Unknown action.');
+  }
+});
+
+async function startSignIn(deviceUid, d) {
+  const col = db.collection('deviceSignIn');
+  // One live code per device (asking again replaces it), and expired codes nobody used are swept up as we go.
+  const [mine, stale] = await Promise.all([
+    col.where('deviceUid', '==', deviceUid).get(),
+    col.where('expiresAt', '<', Timestamp.now()).limit(50).get()
+  ]);
+  if (mine.size || stale.size) {
+    const batch = db.batch();
+    new Set([...mine.docs, ...stale.docs].map(s => s.ref.path)).forEach(path => batch.delete(db.doc(path)));
+    await batch.commit();
+  }
+  const expiresAt = Timestamp.fromMillis(Date.now() + SIGN_IN_FOR);
+  const doc = {
+    deviceUid,
+    name: String(d.name || '').trim().slice(0, 80) || 'Phone',
+    platform: ['ios', 'android'].includes(d.platform) ? d.platform : 'other',
+    status: 'pending',
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt
+  };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = Array.from({ length: 8 }, () => SIGN_IN_ALPHABET[randomInt(SIGN_IN_ALPHABET.length)]).join('');
+    try {
+      await col.doc(code).create(doc);
+      return { code, expiresAt: expiresAt.toMillis() };
+    } catch (e) {
+      if (e.code !== 6) throw e; // 6 = ALREADY_EXISTS: that code is taken, draw another
+    }
+  }
+  throw new HttpsError('unavailable', 'Couldn\'t make a code. Try again.');
+}
+
+const deviceOf = data => ({ name: data.name, platform: data.platform });
+
+/** The pending, unexpired code's document, or a readable error. */
+async function waitingSignIn(raw, t) {
+  const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!SIGN_IN_CODE.test(code)) throw new HttpsError('invalid-argument', 'Enter the 8-character code shown on the other device.');
+  const ref = db.doc(`deviceSignIn/${code}`);
+  const snap = t ? await t.get(ref) : await ref.get();
+  const data = snap.data();
+  if (!data || data.expiresAt.toMillis() < Date.now()) {
+    throw new HttpsError('not-found', 'No device is showing that code. Check it, or get a new code on the other device.');
+  }
+  if (data.status !== 'pending') throw new HttpsError('failed-precondition', 'That code has already been used. Get a new code on the other device.');
+  return t ? { ref, data } : data;
+}
+
+async function approveSignIn(auth, code) {
+  return db.runTransaction(async t => {
+    const { ref, data } = await waitingSignIn(code, t);
+    t.update(ref, { status: 'approved', ownerUid: auth.uid, approvedAt: FieldValue.serverTimestamp() });
+    logger.info('device sign-in approved', { owner: auth.uid, platform: data.platform });
+    return { device: deviceOf(data) };
+  });
+}
+
+async function redeemSignIn(deviceUid, raw) {
+  const code = String(raw || '').toUpperCase();
+  if (!SIGN_IN_CODE.test(code)) throw new HttpsError('invalid-argument', 'Bad code.');
+  const ref = db.doc(`deviceSignIn/${code}`);
+  // Read, mint, then delete only if nobody else redeemed it meanwhile, so a failure on the way keeps the
+  // approval for another try and a code still signs in at most one device.
+  const data = (await ref.get()).data();
+  if (!data || data.deviceUid !== deviceUid) throw new HttpsError('not-found', 'This code has expired. Get a new one.');
+  if (data.status !== 'approved') throw new HttpsError('failed-precondition', 'Not approved yet.');
+  const token = await getAuth().createCustomToken(data.ownerUid);
+  await db.runTransaction(async t => {
+    const now = (await t.get(ref)).data();
+    if (now?.status !== 'approved' || now.deviceUid !== deviceUid) throw new HttpsError('not-found', 'This code has expired. Get a new one.');
+    t.delete(ref);
+  });
+  // The anonymous user only existed to ask for the code.
+  await getAuth().deleteUser(deviceUid).catch(e => logger.warn('could not delete the anonymous user', { error: e.message }));
+  return { token };
+}

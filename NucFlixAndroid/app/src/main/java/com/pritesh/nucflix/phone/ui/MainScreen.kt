@@ -90,6 +90,7 @@ sealed interface Page {
     data object Account : Page
     data object Lines : Page
     data object PairTv : Page
+    data object ApproveDevice : Page
     data object Downloads : Page
 }
 
@@ -112,6 +113,7 @@ fun MainScreen(cloud: CloudAccount, library: Library) {
         Page.Account -> { AccountScreen(cloud, library, open) { pages.removeAt(pages.lastIndex) }; return }
         Page.Lines -> { LinesScreen(cloud) { pages.removeAt(pages.lastIndex) }; return }
         Page.PairTv -> { PairTvScreen(cloud) { pages.removeAt(pages.lastIndex) }; return }
+        Page.ApproveDevice -> { ApproveDeviceScreen(cloud, null) { pages.removeAt(pages.lastIndex) }; return }
         Page.Downloads -> { DownloadsScreen(library) { pages.removeAt(pages.lastIndex) }; return }
         null -> Unit
     }

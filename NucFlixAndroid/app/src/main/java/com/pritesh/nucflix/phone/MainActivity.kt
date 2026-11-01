@@ -8,6 +8,7 @@ import androidx.fragment.app.FragmentActivity
 import com.pritesh.nucflix.phone.ui.NucFlixTheme
 import com.pritesh.nucflix.phone.ui.Root
 import com.pritesh.nucflix.phone.ui.pairCodeFrom
+import com.pritesh.nucflix.phone.ui.signInCodeFrom
 
 /** A FragmentActivity so the biometric prompt ("Forgot PIN?") can attach to it. */
 class MainActivity : FragmentActivity() {
@@ -27,8 +28,12 @@ class MainActivity : FragmentActivity() {
         handle(intent)
     }
 
-    /** nucflix://pair?code=... opened from a TV's QR code (camera, Lens, any scanner). */
+    /**
+     * nucflix://pair?code=... opened from a TV's QR code (camera, Lens, any scanner), or nucflix://signin?code=...
+     * from another phone's "sign in with another device" QR code.
+     */
     private fun handle(intent: Intent?) {
         pairCodeFrom(intent?.dataString)?.let { cloud.scannedPairCode = it }
+        signInCodeFrom(intent?.dataString)?.let { cloud.scannedSignInCode = it }
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -76,6 +77,7 @@ fun AccountScreen(cloud: CloudAccount, library: Library, open: (Page) -> Unit, o
             NavRow(Icons.Filled.People, "Switch Profile", profile.name) { cloud.selectProfile(null) }
             NavRow(Icons.Filled.Dns, "IPTV Lines", library.line?.name ?: "") { cloud.error = null; open(Page.Lines) }
             NavRow(Icons.Filled.Tv, "Pair a TV", if (cloud.pairedTvs.isEmpty()) "No TVs yet" else "${cloud.pairedTvs.size} paired") { open(Page.PairTv) }
+            NavRow(Icons.Filled.QrCode, "Sign in another device", "") { open(Page.ApproveDevice) }
             NavRow(Icons.Filled.Download, "Downloads", "${(activity.application as com.pritesh.nucflix.phone.NucFlixApp).downloads.items.size} on this phone") { open(Page.Downloads) }
             library.client?.let { client ->
                 Section("Subscription")

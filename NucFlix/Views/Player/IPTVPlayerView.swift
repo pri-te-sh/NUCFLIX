@@ -346,15 +346,16 @@ struct IPTVPlayerView: View {
                     }
                 } else {
                     // PORTRAIT NETFLIX LAYOUT (Zero overlap, tailored for vertical screen)
+                    // Only transport controls sit over the 16:9 video, on its centre: the video is centred on the
+                    // whole screen, so they ignore the safe area (between the bars they sat well above it).
+                    netflixCenterTransportControls(spacing: 56, skipSize: 34, playSize: 42)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .ignoresSafeArea()
+
                     VStack(spacing: 0) {
                         netflixPortraitTopBar
                             .padding(.horizontal, 16)
                             .padding(.top, 12)
-
-                        Spacer()
-
-                        // Only transport controls sit over the 16:9 video center in portrait
-                        netflixCenterTransportControls(spacing: 56, skipSize: 34, playSize: 42)
 
                         Spacer()
 
@@ -712,103 +713,74 @@ struct IPTVPlayerView: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
 
-            HStack(spacing: isLandscape ? 54 : 32) {
+            // Portrait has room for one icon-over-label button per column; in one line the four of them ran past
+            // the screen's width and pushed the whole overlay off centre.
+            HStack(alignment: .top, spacing: isLandscape ? 54 : 4) {
                 if item.contentType == .live, item.streamID != nil {
-                    Button {
+                    playerActionButton("TV Guide", icon: "list.bullet.rectangle", compact: !isLandscape) {
                         showEPGSheet = true
                         scheduleAutoHideControls()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "list.bullet.rectangle")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("TV Guide")
-                                .font(.system(size: 13, weight: .bold))
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                 }
 
-                Button {
+                playerActionButton("Speed (\(formattedSpeed))", icon: "gauge.with.needle", compact: !isLandscape) {
                     cyclePlaybackSpeed()
                     scheduleAutoHideControls()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "gauge.with.needle")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text("Speed (\(formattedSpeed))")
-                            .font(.system(size: 13, weight: .bold))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
 
                 if item.contentType != .live {
-                    Button {
+                    playerActionButton("X-Ray", icon: "person.crop.square.badge.camera", compact: !isLandscape) {
                         openXRay()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "person.crop.square.badge.camera")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("X-Ray")
-                                .font(.system(size: 13, weight: .bold))
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                 }
 
-                Button {
+                playerActionButton("Audio & Subtitles", icon: "captions.bubble", compact: !isLandscape) {
                     refreshVLCTracks()
                     showAudioSubtitleSheet = true
                     scheduleAutoHideControls()
-                } label: {
+                }
+
+                if nextEpisodeItem != nil {
+                    playerActionButton("Next Episode", icon: "forward.end.fill", compact: !isLandscape) {
+                        playNextEpisode(automatic: false)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One of the bottom row's buttons: icon beside the label in landscape, icon over a small label in portrait.
+    private func playerActionButton(_ title: String, icon: String, compact: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Group {
+                if compact {
+                    VStack(spacing: 5) {
+                        Image(systemName: icon)
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(height: 22)
+                        Text(title)
+                            .font(.system(size: 11, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
                     HStack(spacing: 6) {
-                        Image(systemName: "captions.bubble")
+                        Image(systemName: icon)
                             .font(.system(size: 14, weight: .semibold))
-                        Text("Audio & Subtitles")
+                        Text(title)
                             .font(.system(size: 13, weight: .bold))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundStyle(.white)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if nextEpisodeItem != nil {
-                    Button {
-                        playNextEpisode(automatic: false)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "forward.end.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Next Episode")
-                                .font(.system(size: 13, weight: .bold))
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
                 }
             }
+            .foregroundStyle(.white)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Authentic Netflix Locked Screen Overlay (Blocks All Stray Touches Until Unlocked)

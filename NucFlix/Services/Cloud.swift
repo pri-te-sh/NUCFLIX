@@ -144,6 +144,8 @@ final class CloudAccount {
     var authError: String?
     /// A pairing code from a scanned TV QR code, waiting for the user to confirm (see RootView).
     var scannedPairCode: String?
+    /// A code from another phone's "sign in with another device" QR code, waiting for the user to confirm.
+    var scannedSignInCode: String?
     var isBusy = false
 
     @ObservationIgnored private var authHandle: AuthStateDidChangeListenerHandle?
@@ -273,6 +275,32 @@ final class CloudAccount {
             batch.deleteDocument(user.collection("devices").document(tv.id))
             try await batch.commit()
         }
+    }
+
+    // MARK: Sign in another device
+
+    /// A phone or tablet waiting to be signed in to this account (see DeviceSignInView).
+    struct WaitingDevice: Equatable {
+        let name: String
+        let platform: String
+    }
+
+    /// Who is showing this sign-in code, before the user agrees to let them in.
+    func lookUpDeviceSignIn(code: String) async -> WaitingDevice? { await deviceSignIn("lookup", code: code) }
+
+    /// Signs the device showing this code in to this account (the deviceSignIn Cloud Function hands it a token).
+    func approveDeviceSignIn(code: String) async -> WaitingDevice? { await deviceSignIn("approve", code: code) }
+
+    private func deviceSignIn(_ action: String, code raw: String) async -> WaitingDevice? {
+        let code = raw.uppercased().filter { $0.isLetter || $0.isNumber }
+        var device: WaitingDevice?
+        await run {
+            let result = try await Functions.functions(region: SmartAI.region).httpsCallable("deviceSignIn")
+                .call(["action": action, "code": code])
+            let info = (result.data as? [String: Any])?["device"] as? [String: Any]
+            device = WaitingDevice(name: info?["name"] as? String ?? "Phone", platform: info?["platform"] as? String ?? "")
+        }
+        return device
     }
 
     func selectProfile(_ id: String?) {

@@ -27,6 +27,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.functions.FirebaseFunctions
 import com.pritesh.nucflix.phone.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.MainScope
@@ -61,6 +62,8 @@ class CloudAccount(context: Context) {
     var busy by mutableStateOf(false); private set
     /** A pairing code from a scanned TV QR code, waiting for the user to confirm. */
     var scannedPairCode by mutableStateOf<String?>(null)
+    /** A code from another phone's "sign in with another device" QR code, waiting for the user to confirm. */
+    var scannedSignInCode by mutableStateOf<String?>(null)
 
     val selectedProfile: CloudProfile? get() = profiles.firstOrNull { it.id == selectedProfileId }
     val activeLine: CloudLine? get() = lines.firstOrNull { it.id == activeLineId } ?: lines.firstOrNull()
@@ -342,6 +345,25 @@ class CloudAccount(context: Context) {
             batch.delete(user.collection("devices").document(tv.id))
             batch.commit().await()
         }
+    }
+
+    // ---------------------------------------------------------------- sign in another device
+
+    /** A phone or tablet waiting to be signed in to this account (see DeviceSignIn.kt). */
+    data class WaitingDevice(val name: String, val platform: String)
+
+    /** Who is showing this sign-in code, before the user agrees to let them in. */
+    suspend fun lookUpDeviceSignIn(code: String): WaitingDevice? = deviceSignIn("lookup", code)
+
+    /** Signs the device showing this code in to this account (the deviceSignIn Cloud Function hands it a token). */
+    suspend fun approveDeviceSignIn(code: String): WaitingDevice? = deviceSignIn("approve", code)
+
+    private suspend fun deviceSignIn(action: String, raw: String): WaitingDevice? = run {
+        val code = raw.uppercase().filter { it.isLetterOrDigit() }
+        val result = FirebaseFunctions.getInstance("us-central1").getHttpsCallable("deviceSignIn")
+            .call(mapOf("action" to action, "code" to code)).await().getData() as? Map<*, *>
+        val device = result?.get("device") as? Map<*, *>
+        WaitingDevice(device?.get("name") as? String ?: "Phone", device?.get("platform") as? String ?: "")
     }
 
     // ---------------------------------------------------------------- helpers
